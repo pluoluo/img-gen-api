@@ -308,7 +308,7 @@ margin-top: 6px;
 <option value="1024x1024">1024 x 1024</option>
 </select>
 </div>
-<input type="text" id="sizeCustom" placeholder="例如 1920x1080" style="display:none;">
+<input type="text" id="sizeCustom" placeholder="例如 1920x1080 或 1920*1080" style="display:none;">
 </div>
 <div class="field">
 <label>数量</label>
@@ -460,10 +460,9 @@ sizeSel.appendChild(opt);
     // 尺寸约束：最大边 ≤ 3840，两边 16 倍数，长宽比 ≤ 3:1，总像素 655360~8294400
     // 有参考图时默认 auto（由 JS 在 handleFile 中设置）
     const defaults = [
-    // Auto（参考图时推荐，保持原图比例）
+    // 预设尺寸（gpt-image-2 默认 2K 16:9）
+    { value: '3200x1808', label: '3200 x 1808 (2K 16:9)' },
     { value: 'auto', label: '自动' },
-    // 预设尺寸
-    { value: '1024x1024', label: '1024 x 1024 (1K 1:1)' },
     { value: '2048x2048', label: '2048 x 2048 (2K 1:1)' },
     { value: '2880x2880', label: '2880 x 2880 (4K 1:1)' },
     { value: '1280x720',   label: '1280 x 720 (1K 16:9)' },
@@ -553,10 +552,10 @@ const reader = new FileReader();
 reader.onload = e => {
 previewImg.src = e.target.result;
 imagePreview.style.display = 'inline-block';
-// 有参考图时，保留用户选择的尺寸（用户可手动切换为自动）
-// 注释掉自动切换逻辑：if (subModelSel.value === 'gpt-image-2') {
-//   sizeSel.value = 'auto';
-// }
+// 有参考图时默认自动（保持原图比例）
+if (subModelSel.value === 'gpt-image-2') {
+  sizeSel.value = 'auto';
+}
 };
 reader.readAsDataURL(file);
 }
@@ -726,11 +725,14 @@ form.addEventListener('submit', async e => {
   generateBtn.disabled = true;
 
   try {
+    let sizeVal = sizeSel.value === '__custom__' ? document.getElementById('sizeCustom').value.trim() : sizeSel.value;
+    // 支持 1920*1080 格式（* 号）
+    sizeVal = sizeVal.replace(/\*/g, 'x');
     const body = {
       model: providerSel.value,
       sub_model: subModelSel.value,
       prompt: document.getElementById('prompt').value,
-      size: sizeSel.value === '__custom__' ? document.getElementById('sizeCustom').value.trim() : sizeSel.value,
+      size: sizeVal,
       n: parseInt(document.getElementById('n').value),
     };
 
