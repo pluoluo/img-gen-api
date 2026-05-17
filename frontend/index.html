@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 图片生成器</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+background: #0a0a0f;
+color: #e5e5e5;
+min-height: 100vh;
+}
+
+.container { max-width: 680px; margin: 0 auto; padding: 40px 20px; }
+
+header { text-align: center; margin-bottom: 32px; }
+
+h1 {
+font-size: 2rem;
+font-weight: 700;
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+-webkit-background-clip: text;
+-webkit-text-fill-color: transparent;
+background-clip: text;
+margin-bottom: 6px;
+}
+
+.subtitle { color: #666; font-size: 0.875rem; }
+
+/* 中文优化 */
+label { text-transform: none; }
+
+.card {
+background: #141419;
+border: 1px solid #2a2a35;
+border-radius: 16px;
+padding: 28px;
+}
+
+.field { margin-bottom: 20px; }
+
+label {
+display: block;
+font-size: 0.8rem;
+font-weight: 500;
+color: #888;
+margin-bottom: 8px;
+text-transform: uppercase;
+letter-spacing: 0.05em;
+}
+
+select, textarea, input[type="text"] {
+width: 100%;
+padding: 11px 14px;
+background: #1a1a22;
+border: 1px solid #2a2a35;
+border-radius: 8px;
+color: #e5e5e5;
+font-size: 0.95rem;
+transition: border-color 0.2s;
+}
+
+select:focus, textarea:focus, input[type="text"]:focus {
+outline: none;
+border-color: #667eea;
+}
+
+textarea { min-height: 100px; resize: vertical; }
+
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.upload-area {
+border: 2px dashed #2a2a35;
+border-radius: 10px;
+padding: 24px;
+text-align: center;
+cursor: pointer;
+transition: all 0.2s;
+position: relative;
+}
+
+.upload-area:hover, .upload-area.dragover {
+border-color: #667eea;
+background: rgba(102, 126, 234, 0.05);
+}
+
+.upload-area input {
+position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+
+.upload-icon { font-size: 1.6rem; margin-bottom: 6px; }
+.upload-hint { color: #555; font-size: 0.8rem; }
+
+#imagePreview {
+display: none;
+margin-top: 12px;
+position: relative;
+}
+
+#imagePreview img {
+max-width: 120px;
+max-height: 120px;
+border-radius: 6px;
+border: 1px solid #2a2a35;
+}
+
+#imagePreview .remove-btn {
+position: absolute;
+top: -6px; right: -6px;
+width: 20px; height: 20px;
+background: #ff4757;
+border: none;
+border-radius: 50%;
+color: white;
+cursor: pointer;
+font-size: 12px;
+line-height: 20px;
+}
+
+/* conditional quality field */
+#qualityField { display: none; }
+
+.btn {
+width: 100%;
+padding: 14px;
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+border: none;
+border-radius: 8px;
+color: white;
+font-size: 0.95rem;
+font-weight: 600;
+cursor: pointer;
+transition: opacity 0.2s, transform 0.1s;
+}
+
+.btn:hover:not(:disabled) { opacity: 0.88; }
+.btn:active:not(:disabled) { transform: scale(0.98); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.loader {
+display: none;
+text-align: center;
+padding: 32px;
+}
+
+.loader.show { display: block; }
+
+.spinner {
+width: 36px; height: 36px;
+border: 3px solid #2a2a35;
+border-top-color: #667eea;
+border-radius: 50%;
+animation: spin 1s linear infinite;
+margin: 0 auto 12px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.images-grid {
+display: none;
+gap: 12px;
+margin-top: 20px;
+}
+
+.images-grid.show { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+
+.img-card {
+background: #1a1a22;
+border-radius: 10px;
+overflow: hidden;
+border: 1px solid #2a2a35;
+}
+
+.img-card img {
+width: 100%;
+aspect-ratio: 1;
+object-fit: cover;
+display: block;
+}
+
+.img-card .actions { padding: 10px; display: flex; gap: 6px; }
+
+.img-card button {
+flex: 1;
+padding: 7px;
+background: #2a2a35;
+border: none;
+border-radius: 5px;
+color: #ccc;
+font-size: 0.8rem;
+cursor: pointer;
+transition: background 0.2s;
+}
+
+.img-card button:hover { background: #3a3a45; }
+
+.err-msg {
+display: none;
+background: rgba(255, 71, 87, 0.1);
+border: 1px solid #ff4757;
+border-radius: 8px;
+padding: 14px;
+margin-top: 16px;
+color: #ff6b7a;
+font-size: 0.9rem;
+}
+
+.err-msg.show { display: block; }
+
+.model-hint {
+font-size: 0.75rem;
+color: #555;
+margin-top: 6px;
+}
+
+/* Fullscreen image modal */
+.img-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.95);
+  z-index: 200;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+.img-modal.show { display: flex; }
+.img-modal img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.img-modal-close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  background: rgba(30,30,35,0.9);
+  border: 1px solid #3a3a45;
+  color: #ccc;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 40px;
+  text-align: center;
+}
+.img-modal-close:hover { background: #3a3a45; }
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<h1>AI Image Generator</h1>
+<p class="subtitle">OpenAI / Gemini / MiniMax 图片生成服务</p>
+<a href="/gallery" style="position:absolute;top:20px;right:20px;font-size:0.8rem;color:#667eea;text-decoration:none;">🖼️ 图库</a>
+<a href="/logs" style="position:absolute;top:20px;right:80px;font-size:0.8rem;color:#667eea;text-decoration:none;">📋 日志</a>
+</header>
+
+<div class="card">
+<form id="form">
+
+<div class="field">
+<label>Provider</label>
+<select id="provider">
+<option value="openai">OpenAI-HK</option>
+<option value="packy">PackyAPI</option>
+<option value="gemini">Gemini</option>
+<option value="minimax">MiniMax</option>
+</select>
+</div>
+
+<div class="field">
+<label>模型</label>
+<select id="subModel">
+<!-- options injected by JS based on provider -->
+</select>
+<p class="model-hint" id="modelHint"></p>
+</div>
+
+<div class="field">
+<label>提示词</label>
+<textarea id="prompt" placeholder="描述你想要生成的图片，越详细越好..." required></textarea>
+</div>
+
+<div class="field">
+<label>参考图（可选）</label>
+<div class="upload-area" id="uploadArea">
+<input type="file" id="imageInput" accept="image/*">
+<div class="upload-icon">&#128247;</div>
+<div class="upload-hint">点击或拖拽上传图片</div>
+</div>
+<div id="imagePreview">
+<img id="previewImg" src="" alt="">
+<button type="button" class="remove-btn" id="removeBtn">&#10005;</button>
+</div>
+</div>
+
+<div class="row">
+<div class="field">
+<label id="sizeLabel">尺寸</label>
+<div id="sizeSelectWrap">
+<select id="size">
+<option value="1024x1024">1024 x 1024</option>
+</select>
+</div>
+<input type="text" id="sizeCustom" placeholder="例如 1920x1080" style="display:none;">
+</div>
+<div class="field">
+<label>数量</label>
+<select id="n">
+<option value="1">1</option>
+<option value="2">2</option>
+<option value="3">3</option>
+<option value="4">4</option>
+</select>
+</div>
+</div>
+
+<!-- quality: only shown for gpt-image-2 -->
+<div class="field" id="qualityField">
+<label>质量</label>
+<select id="quality">
+<option value="low">低</option>
+<option value="medium" selected>中（默认）</option>
+<option value="high">高</option>
+</select>
+</div>
+
+<button type="submit" class="btn" id="generateBtn">生成图片</button>
+</form>
+
+<div class="loader" id="loader">
+<div class="spinner"></div>
+<p style="color:#666;font-size:0.9rem" id="loaderText">已提交，等待任务启动...</p>
+<div class="progress-bar-wrap" id="progressWrap" style="display:none;margin-top:12px;">
+  <div class="progress-bar" id="progressBar" style="height:6px;background:#2a2a35;border-radius:3px;overflow:hidden;">
+    <div id="progressFill" style="height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.4s ease;"></div>
+  </div>
+  <p style="color:#555;font-size:0.8rem;margin-top:6px;text-align:center;" id="progressText">0%</p>
+</div>
+</div>
+
+<div class="err-msg" id="errMsg"></div>
+
+<div class="images-grid" id="imagesGrid"></div>
+</div>
+</div>
+
+<!-- Fullscreen image modal -->
+<div class="img-modal" id="imgModal">
+  <button class="img-modal-close" id="imgModalClose">×</button>
+  <img id="imgModalSrc" src="" alt="">
+</div>
+
+<script>
+const MODELS = {
+openai: [
+{ value: 'gpt-image-2', label: 'GPT Image 2' },
+],
+packy: [
+{ value: 'gpt-image-2', label: 'GPT Image 2' },
+],
+gemini: [
+{ value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
+{ value: 'gemini-3.1-flash-image-preview-2k', label: 'Gemini 闪存图 (2K)' },
+{ value: 'gemini-3.1-flash-image-preview-4k', label: 'Gemini 闪存图 (4K)' },
+],
+minimax: [
+{ value: 'image-01', label: 'MiniMax 图像-01' },
+]
+};
+
+const HINTS = {
+'gpt-image-2': '质量/尺寸扣费相同，默认中质量+自动',
+'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
+'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
+'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
+'image-01': 'MiniMax 图像模型',
+};
+
+const SIZE_OVERRIDES = {
+// Gemini 1K/2K/4K: all support ratio-based sizes (API interprets ratio per tier)
+'gemini-3.1-flash-image-preview': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
+'gemini-3.1-flash-image-preview-2k': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
+'gemini-3.1-flash-image-preview-4k': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
+// MiniMax: aspect ratios
+'image-01': { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] },
+};
+
+const QUALITY_MODELS = ['gpt-image-2'];
+
+const providerSel = document.getElementById('provider');
+const subModelSel = document.getElementById('subModel');
+const modelHint = document.getElementById('modelHint');
+const qualityField = document.getElementById('qualityField');
+const sizeSel = document.getElementById('size');
+
+function rebuildModels() {
+const prov = providerSel.value;
+const models = MODELS[prov] || [];
+const current = subModelSel.value;
+
+subModelSel.innerHTML = '';
+models.forEach(m => {
+const opt = document.createElement('option');
+opt.value = m.value;
+opt.textContent = m.label;
+subModelSel.appendChild(opt);
+});
+
+// restore if still valid
+if (models.find(m => m.value === current)) {
+subModelSel.value = current;
+}
+
+applyModelConstraints();
+}
+
+function applyModelConstraints() {
+const model = subModelSel.value;
+const prov = providerSel.value;
+
+// hint
+modelHint.textContent = HINTS[model] || '';
+
+// quality field
+qualityField.style.display = QUALITY_MODELS.includes(model) ? 'block' : 'none';
+
+// size label: "Aspect Ratio" for MiniMax, "Size" for others
+const sizeLabel = document.getElementById('sizeLabel');
+sizeLabel.textContent = (prov === 'minimax') ? 'Aspect Ratio' : 'Size';
+
+// size options
+if (SIZE_OVERRIDES[model]) {
+const opts = SIZE_OVERRIDES[model];
+sizeSel.innerHTML = '';
+opts.values.forEach((v, i) => {
+const opt = document.createElement('option');
+opt.value = v;
+opt.textContent = opts.labels[i];
+sizeSel.appendChild(opt);
+});
+} else if (prov === 'minimax') {
+// MiniMax defaults to 1:1
+sizeSel.innerHTML = '';
+const opts = { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] };
+opts.values.forEach((v, i) => {
+const opt = document.createElement('option');
+opt.value = v;
+opt.textContent = opts.labels[i];
+sizeSel.appendChild(opt);
+});
+} else {
+    // gpt-image-2 pixel sizes — open-hk 新增 5:4、4:5、21:9 等比例（2026-05-07）
+    // 尺寸约束：最大边 ≤ 3840，两边 16 倍数，长宽比 ≤ 3:1，总像素 655360~8294400
+    // 有参考图时默认 auto（由 JS 在 handleFile 中设置）
+    const defaults = [
+    // Auto（参考图时推荐，保持原图比例）
+    { value: 'auto', label: '自动' },
+    // 预设尺寸
+    { value: '1024x1024', label: '1024 x 1024 (1K 1:1)' },
+    { value: '2048x2048', label: '2048 x 2048 (2K 1:1)' },
+    { value: '2880x2880', label: '2880 x 2880 (4K 1:1)' },
+    { value: '1280x720',   label: '1280 x 720 (1K 16:9)' },
+    { value: '2048x1152', label: '2048 x 1152 (2K 16:9)' },
+    { value: '3840x2160', label: '3840 x 2160 (4K 16:9)' },
+    { value: '720x1280',   label: '720 x 1280 (1K 9:16)' },
+    { value: '1152x2048', label: '1152 x 2048 (2K 9:16)' },
+    { value: '2160x3840', label: '2160 x 3840 (4K 9:16)' },
+    { value: '1024x768',   label: '1024 x 768 (1K 4:3)' },
+    { value: '2048x1536', label: '2048 x 1536 (2K 4:3)' },
+    { value: '3264x2448', label: '3264 x 2448 (4K 4:3)' },
+    { value: '768x1024',   label: '768 x 1024 (1K 3:4)' },
+    { value: '1536x2048', label: '1536 x 2048 (2K 3:4)' },
+    { value: '2448x3264', label: '2448 x 3264 (4K 3:4)' },
+    { value: '1008x672',   label: '1008 x 672 (1K 3:2)' },
+    { value: '2064x1376', label: '2064 x 1376 (2K 3:2)' },
+    { value: '3504x2336', label: '3504 x 2336 (4K 3:2)' },
+    { value: '672x1008',   label: '672 x 1008 (1K 2:3)' },
+    { value: '1376x2064', label: '1376 x 2064 (2K 2:3)' },
+    { value: '2336x3504', label: '2336 x 3504 (4K 2:3)' },
+    { value: '1040x832',   label: '1040 x 832 (1K 5:4)' },
+    { value: '2080x1664', label: '2080 x 1664 (2K 5:4)' },
+    { value: '3200x2560', label: '3200 x 2560 (4K 5:4)' },
+    { value: '832x1040',   label: '832 x 1040 (1K 4:5)' },
+    { value: '1664x2080', label: '1664 x 2080 (2K 4:5)' },
+    { value: '2560x3200', label: '2560 x 3200 (4K 4:5)' },
+    { value: '1344x576',   label: '1344 x 576 (1K 21:9)' },
+    { value: '2016x864',   label: '2016 x 864 (2K 21:9)' },
+    { value: '3808x1632', label: '3808 x 1632 (4K 21:9)' },
+    { value: '__custom__', label: '自定义...' },
+    ];
+    sizeSel.innerHTML = '';
+    defaults.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.value;
+    opt.textContent = d.label;
+    sizeSel.appendChild(opt);
+    });
+    // Reset custom input visibility when switching models
+    sizeSel.selectedIndex = 0;
+    document.getElementById('sizeCustom').style.display = 'none';
+    document.getElementById('sizeSelectWrap').style.display = '';
+}
+}
+
+providerSel.addEventListener('change', rebuildModels);
+subModelSel.addEventListener('change', applyModelConstraints);
+sizeSel.addEventListener('change', () => {
+  const isCustom = sizeSel.value === '__custom__';
+  document.getElementById('sizeSelectWrap').style.display = isCustom ? 'none' : '';
+  document.getElementById('sizeCustom').style.display = isCustom ? '' : 'none';
+  if (isCustom) document.getElementById('sizeCustom').focus();
+  // Warn on very high resolutions (total pixels > 5,785,600)
+  const parts = sizeSel.value.split('x');
+  if (parts.length === 2) {
+    const w = parseInt(parts[0]), h = parseInt(parts[1]);
+    if (w * h > 5785600) {
+      alert('注意：总像素超过 5785600 时 PackyAPI 可能生成失败，可以重试或降低分辨率。');
+    }
+  }
+});
+
+// upload handling
+const uploadArea = document.getElementById('uploadArea');
+const imageInput = document.getElementById('imageInput');
+const imagePreview = document.getElementById('imagePreview');
+const previewImg = document.getElementById('previewImg');
+const removeBtn = document.getElementById('removeBtn');
+let selectedFile = null;
+
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+e.preventDefault();
+uploadArea.classList.remove('dragover');
+const file = e.dataTransfer.files[0];
+if (file && file.type.startsWith('image/')) handleFile(file);
+});
+imageInput.addEventListener('change', e => {
+const file = e.target.files[0];
+if (file) handleFile(file);
+});
+
+function handleFile(file) {
+selectedFile = file;
+const reader = new FileReader();
+reader.onload = e => {
+previewImg.src = e.target.result;
+imagePreview.style.display = 'inline-block';
+// 有参考图时，保留用户选择的尺寸（用户可手动切换为自动）
+// 注释掉自动切换逻辑：if (subModelSel.value === 'gpt-image-2') {
+//   sizeSel.value = 'auto';
+// }
+};
+reader.readAsDataURL(file);
+}
+
+removeBtn.addEventListener('click', () => {
+selectedFile = null;
+imageInput.value = '';
+imagePreview.style.display = 'none';
+previewImg.src = '';
+});
+
+function fileToBase64(file) {
+return new Promise((resolve, reject) => {
+const reader = new FileReader();
+reader.onload = () => resolve(reader.result.split(',')[1]);
+reader.onerror = reject;
+reader.readAsDataURL(file);
+});
+}
+
+function downloadImage(dataUrl, filename) {
+const a = document.createElement('a');
+a.href = dataUrl;
+a.download = filename;
+a.click();
+}
+
+function openImageModal(dataUrl) {
+    const modal = document.getElementById('imgModal');
+    const modalImg = document.getElementById('imgModalSrc');
+    modalImg.src = dataUrl;
+    modal.classList.add('show');
+}
+
+document.getElementById('imgModalClose').addEventListener('click', () => {
+    document.getElementById('imgModal').classList.remove('show');
+});
+document.getElementById('imgModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('imgModal')) {
+        document.getElementById('imgModal').classList.remove('show');
+    }
+});
+
+const form = document.getElementById('form');
+const loader = document.getElementById('loader');
+const loaderText = document.getElementById('loaderText');
+const progressWrap = document.getElementById('progressWrap');
+const progressFill = document.getElementById('progressFill');
+const progressTextEl = document.getElementById('progressText');
+const imagesGrid = document.getElementById('imagesGrid');
+const errMsg = document.getElementById('errMsg');
+const generateBtn = document.getElementById('generateBtn');
+
+let pollInterval = null;
+
+function setProgress(pct, label) {
+  progressFill.style.width = pct + '%';
+  progressTextEl.textContent = label || (pct + '%');
+}
+
+function showLoader(msg) {
+  loader.classList.add('show');
+  loaderText.textContent = msg || '生成中...';
+  progressWrap.style.display = 'none';
+}
+
+function showGenerating(taskId) {
+  loader.classList.add('show');
+  progressWrap.style.display = 'block';
+  setProgress(0, '正在创建任务...');
+
+  const steps = [
+    { pct: 10, msg: '排队中', delay: 500 },
+    { pct: 30, msg: 'AI 正在生成...', delay: 3000 },
+    { pct: 60, msg: 'AI 正在生成...', delay: 5000 },
+    { pct: 80, msg: '正在保存图片...', delay: 2000 },
+  ];
+
+  let si = 0;
+  function nextStep() {
+    if (si >= steps.length) return;
+    const s = steps[si++];
+    setTimeout(() => {
+      if (pollInterval) setProgress(s.pct, s.msg);
+      if (si < steps.length) nextStep();
+    }, s.delay);
+  }
+  nextStep();
+
+  return new Promise((resolve, reject) => {
+    pollInterval = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/v1/tasks/${taskId}`);
+        if (!resp.ok) {
+          reject(new Error(`查询任务失败 (${resp.status})`));
+          return;
+        }
+        const data = await resp.json();
+        setProgress(data.progress, `已完成 ${data.progress}%`);
+
+        if (data.status === 'completed') {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          loader.classList.remove('show');
+          resolve(data.images || []);
+        } else if (data.status === 'failed') {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          loader.classList.remove('show');
+          reject(new Error(data.error || '生成失败'));
+        }
+      } catch (err) {
+        // Network error during poll — keep waiting, don't fail immediately
+      }
+    }, 3000);
+  });
+}
+
+function renderImages(images) {
+  if (!images.length) return;
+  imagesGrid.innerHTML = '';
+  imagesGrid.classList.add('show');
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    const dataUrl = img.base64
+      ? `data:image/png;base64,${img.base64}`
+      : img.url;
+
+    const card = document.createElement('div');
+    card.className = 'img-card';
+
+    const imgEl = document.createElement('img');
+    imgEl.src = dataUrl;
+    imgEl.alt = `图片 ${i + 1}`;
+    imgEl.style.cursor = 'zoom-in';
+    imgEl.addEventListener('click', () => openImageModal(dataUrl));
+    card.appendChild(imgEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const dlBtn = document.createElement('button');
+    dlBtn.textContent = '下载';
+    dlBtn.addEventListener('click', () => downloadImage(dataUrl, `img-${Date.now()}-${i+1}.png`));
+    actions.appendChild(dlBtn);
+
+    const openBtn = document.createElement('button');
+    openBtn.textContent = '放大';
+    openBtn.addEventListener('click', () => openImageModal(dataUrl));
+    actions.appendChild(openBtn);
+
+    card.appendChild(actions);
+    imagesGrid.appendChild(card);
+  }
+}
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+
+  // Guard: prevent re-submission while a task is running
+  if (generateBtn.disabled) return;
+
+  errMsg.classList.remove('show');
+  imagesGrid.classList.remove('show');
+  imagesGrid.innerHTML = '';
+  generateBtn.disabled = true;
+
+  try {
+    const body = {
+      model: providerSel.value,
+      sub_model: subModelSel.value,
+      prompt: document.getElementById('prompt').value,
+      size: sizeSel.value === '__custom__' ? document.getElementById('sizeCustom').value.trim() : sizeSel.value,
+      n: parseInt(document.getElementById('n').value),
+    };
+
+    const quality = document.getElementById('quality').value;
+    if (quality) body.quality = quality;
+
+    if (selectedFile) {
+      body.image_base64 = await fileToBase64(selectedFile);
+    }
+
+    const resp = await fetch('/api/v1/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || '生成失败');
+    }
+
+    const data = await resp.json();
+    const taskId = data.task_id;
+
+    // Wait for generation to finish — this Promise resolves on completed, rejects on failed
+    const images = await showGenerating(taskId);
+
+    if (images && images.length > 0) {
+      renderImages(images);
+      // Offer to jump to gallery
+      setTimeout(() => {
+        if (confirm('图片生成完成！是否跳转到图库查看？')) {
+          window.location.href = '/gallery';
+        }
+      }, 500);
+    } else {
+      throw new Error('未返回任何图片');
+    }
+
+  } catch (err) {
+    errMsg.textContent = err.message;
+    errMsg.classList.add('show');
+  } finally {
+    generateBtn.disabled = false;
+  }
+});
+
+// init
+rebuildModels();
+</script>
+</body>
+</html>
