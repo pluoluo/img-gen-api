@@ -400,6 +400,13 @@ const modelHint = document.getElementById('modelHint');
 const qualityField = document.getElementById('qualityField');
 const sizeSel = document.getElementById('size');
 
+// 从 URL 参数读取 prompt 并填入（支持 prompt-portal 跳转）
+const urlParams = new URLSearchParams(window.location.search);
+const promptFromUrl = urlParams.get('prompt');
+if (promptFromUrl) {
+    document.getElementById('prompt').value = promptFromUrl;
+}
+
 function rebuildModels() {
 const prov = providerSel.value;
 const models = MODELS[prov] || [];
