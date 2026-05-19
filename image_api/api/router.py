@@ -22,6 +22,8 @@ class GenerateRequest(BaseModel):
     prompt: str
     image_url: Optional[str] = None
     image_base64: Optional[str] = None
+    image_urls: Optional[List[str]] = None
+    image_base64s: Optional[List[str]] = None
     size: str = "1024x1024"
     n: int = 1
     quality: Optional[str] = None
@@ -64,7 +66,7 @@ async def generate(request: GenerateRequest):
         "size": request.size,
         "quality": request.quality,
         "n": request.n,
-        "has_ref": bool(request.image_url or request.image_base64),
+        "has_ref": bool(request.image_url or request.image_base64 or request.image_urls or request.image_base64s),
     })
 
     # Kick off background generation — fire and forget
@@ -93,6 +95,8 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                 model=request.sub_model,
                 image_url=request.image_url,
                 image_base64=request.image_base64,
+                image_urls=request.image_urls,
+                image_base64s=request.image_base64s,
                 size=request.size,
                 n=request.n,
                 quality=request.quality,
@@ -104,6 +108,8 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                 model=request.sub_model,
                 image_url=request.image_url,
                 image_base64=request.image_base64,
+                image_urls=request.image_urls,
+                image_base64s=request.image_base64s,
                 size=request.size,
                 n=request.n,
                 quality=request.quality,
@@ -114,10 +120,13 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             sub = request.sub_model
             if sub == "gemini-3.1-flash-lite-preview":
                 log_info("调用 Gemini Lite", ctx={"task_id": task_id})
+                # Extract first image from lists (Gemini native endpoint takes single ref)
+                gemini_url = request.image_url or (request.image_urls[0] if request.image_urls else None)
+                gemini_b64 = request.image_base64 or (request.image_base64s[0] if request.image_base64s else None)
                 result = await generate_gemini_image(
                     prompt=request.prompt,
-                    image_url=request.image_url,
-                    image_base64=request.image_base64,
+                    image_url=gemini_url,
+                    image_base64=gemini_b64,
                 )
             else:
                 log_info("调用 Gemini（OpenAI 兼容）", ctx={"task_id": task_id, "sub_model": sub})
@@ -126,16 +135,21 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                     model=sub,
                     image_url=request.image_url,
                     image_base64=request.image_base64,
+                    image_urls=request.image_urls,
+                    image_base64s=request.image_base64s,
                     size=request.size,
                     n=request.n,
                     quality=request.quality,
                 )
         elif request.model == "minimax":
             log_info("调用 MiniMax", ctx={"task_id": task_id})
+            # Extract first image from lists (MiniMax takes single ref)
+            mm_url = request.image_url or (request.image_urls[0] if request.image_urls else None)
+            mm_b64 = request.image_base64 or (request.image_base64s[0] if request.image_base64s else None)
             result = await generate_minimax_image(
                 prompt=request.prompt,
-                image_url=request.image_url,
-                image_base64=request.image_base64,
+                image_url=mm_url,
+                image_base64=mm_b64,
                 size=request.size,
                 n=request.n,
             )

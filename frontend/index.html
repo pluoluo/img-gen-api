@@ -97,14 +97,47 @@ position: absolute; inset: 0; opacity: 0; cursor: pointer;
 #imagePreview {
 display: none;
 margin-top: 12px;
-position: relative;
+gap: 10px;
+flex-wrap: wrap;
 }
 
-#imagePreview img {
-max-width: 120px;
-max-height: 120px;
+#imagePreview .preview-item {
+position: relative;
+display: inline-block;
+}
+
+#imagePreview .preview-item img {
+max-width: 100px;
+max-height: 100px;
 border-radius: 6px;
 border: 1px solid #2a2a35;
+object-fit: cover;
+}
+
+#imagePreview .main-badge {
+position: absolute;
+top: -6px; left: -6px;
+background: linear-gradient(135deg, #667eea, #764ba2);
+border: none;
+border-radius: 10px;
+color: white;
+cursor: default;
+font-size: 9px;
+padding: 2px 8px;
+font-weight: 600;
+letter-spacing: 0.05em;
+}
+
+#imagePreview .main-hint {
+position: absolute;
+bottom: 4px; left: 4px; right: 4px;
+background: rgba(0,0,0,0.7);
+border-radius: 4px;
+color: #aaa;
+font-size: 9px;
+text-align: center;
+padding: 1px 4px;
+pointer-events: none;
 }
 
 #imagePreview .remove-btn {
@@ -290,13 +323,11 @@ margin-top: 6px;
 <div class="field">
 <label>参考图（可选）</label>
 <div class="upload-area" id="uploadArea">
-<input type="file" id="imageInput" accept="image/*">
+<input type="file" id="imageInput" accept="image/*" multiple>
 <div class="upload-icon">&#128247;</div>
 <div class="upload-hint">点击或拖拽上传图片</div>
 </div>
 <div id="imagePreview">
-<img id="previewImg" src="" alt="">
-<button type="button" class="remove-btn" id="removeBtn">&#10005;</button>
 </div>
 </div>
 
@@ -536,43 +567,92 @@ sizeSel.addEventListener('change', () => {
 const uploadArea = document.getElementById('uploadArea');
 const imageInput = document.getElementById('imageInput');
 const imagePreview = document.getElementById('imagePreview');
-const previewImg = document.getElementById('previewImg');
-const removeBtn = document.getElementById('removeBtn');
-let selectedFile = null;
+let selectedFiles = [];
 
 uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', e => {
 e.preventDefault();
 uploadArea.classList.remove('dragover');
-const file = e.dataTransfer.files[0];
-if (file && file.type.startsWith('image/')) handleFile(file);
+const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+if (files.length) handleFiles(files);
 });
 imageInput.addEventListener('change', e => {
-const file = e.target.files[0];
-if (file) handleFile(file);
+const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
+if (files.length) handleFiles(files);
 });
 
-function handleFile(file) {
-selectedFile = file;
-const reader = new FileReader();
-reader.onload = e => {
-previewImg.src = e.target.result;
-imagePreview.style.display = 'inline-block';
+function handleFiles(files) {
+selectedFiles = selectedFiles.concat(files);
+renderPreviews();
 // 有参考图时默认自动（保持原图比例）
-if (subModelSel.value === 'gpt-image-2') {
+if (selectedFiles.length > 0 && subModelSel.value === 'gpt-image-2') {
   sizeSel.value = 'auto';
 }
-};
-reader.readAsDataURL(file);
 }
 
-removeBtn.addEventListener('click', () => {
-selectedFile = null;
-imageInput.value = '';
-imagePreview.style.display = 'none';
-previewImg.src = '';
+function promoteToMain(idx) {
+  if (idx === 0) return;
+  const [file] = selectedFiles.splice(idx, 1);
+  selectedFiles.unshift(file);
+  renderPreviews();
+}
+
+function renderPreviews() {
+imagePreview.innerHTML = '';
+imagePreview.style.display = selectedFiles.length ? 'flex' : 'none';
+
+selectedFiles.forEach((file, idx) => {
+  const isMain = idx === 0;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const item = document.createElement('div');
+    item.className = 'preview-item';
+    if (!isMain) {
+      item.style.cursor = 'pointer';
+      item.title = '点击设为主图';
+    }
+
+    const img = document.createElement('img');
+    img.src = e.target.result;
+    if (isMain) {
+      img.style.border = '2px solid #667eea';
+    }
+    item.appendChild(img);
+
+    if (isMain) {
+      const badge = document.createElement('span');
+      badge.className = 'main-badge';
+      badge.textContent = '主图';
+      item.appendChild(badge);
+    } else {
+      const hint = document.createElement('div');
+      hint.className = 'main-hint';
+      hint.textContent = '点击设为主图';
+      item.appendChild(hint);
+      item.addEventListener('click', () => promoteToMain(idx));
+    }
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'remove-btn';
+    btn.textContent = '✕';
+    btn.addEventListener('click', (ev) => { ev.stopPropagation(); removeFile(idx); });
+    item.appendChild(btn);
+    imagePreview.appendChild(item);
+  };
+  reader.readAsDataURL(file);
 });
+}
+
+function removeFile(idx) {
+selectedFiles.splice(idx, 1);
+imageInput.value = '';
+if (selectedFiles.length === 0) {
+  imagePreview.style.display = 'none';
+}
+renderPreviews();
+}
 
 function fileToBase64(file) {
 return new Promise((resolve, reject) => {
@@ -581,6 +661,14 @@ reader.onload = () => resolve(reader.result.split(',')[1]);
 reader.onerror = reject;
 reader.readAsDataURL(file);
 });
+}
+
+async function filesToBase64List(files) {
+const list = [];
+for (const f of files) {
+  list.push(await fileToBase64(f));
+}
+return list;
 }
 
 function downloadImage(dataUrl, filename) {
@@ -746,8 +834,10 @@ form.addEventListener('submit', async e => {
     const quality = document.getElementById('quality').value;
     if (quality) body.quality = quality;
 
-    if (selectedFile) {
-      body.image_base64 = await fileToBase64(selectedFile);
+    if (selectedFiles.length > 0) {
+      const b64List = await filesToBase64List(selectedFiles);
+      body.image_base64 = b64List[0];         // backward compat: first image as single string
+      body.image_base64s = b64List;           // all images as array
     }
 
     const resp = await fetch('/api/v1/generate', {

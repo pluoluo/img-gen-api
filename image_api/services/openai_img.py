@@ -4,98 +4,74 @@ import io
 from typing import Optional, List
 from PIL import Image
 
-from image_api.config import settings, get_packyapi_ip
+from image_api.config import settings
 from image_api.services.log_helper import log_info, log_warn, log_error
 
 
-# ── PackyAPI curl-based request helper ──────────────────────────────────────
+# ── aiohttp chunked-streaming helpers ───────────────────────────────────────
 
 def _is_packy(base_url: str) -> bool:
     """Check if base_url belongs to PackyAPI."""
     return "packyapi.com" in (base_url or "")
 
 
-async def _packy_curl_request(
-    url: str,
-    api_key: str,
-    body: dict,
-    files: dict = None,
-    timeout: int = 1200,
-) -> dict:
+async def _read_response_chunks(resp, file_path: str) -> int:
+    """Stream response body to file in chunks. Avoids body-read hangs."""
+    import os
+    total = 0
+    with open(file_path, "wb") as f:
+        async for chunk in resp.content.iter_chunked(65536):
+            f.write(chunk)
+            total += len(chunk)
+    return total
+
+
+async def _aiohttp_post(url: str, headers: dict, files: list = None,
+                        data: dict = None, timeout: int = 600) -> dict:
     """
-    Issue HTTP request to PackyAPI using curl with --resolve to bypass CDN DNS timeout.
-    Uses the resolved IP from ping instead of going through Cloudflare CDN.
+    Chunked-streaming POST via aiohttp. Works for both JSON and multipart.
+    files=None → JSON body; files!=None → multipart form.
     """
-    import asyncio, json, subprocess, tempfile, os, shlex
+    import aiohttp, io as io_mod, json as _json, tempfile, os
 
-    ip = get_packyapi_ip()
-    if not ip:
-        raise RuntimeError("PackyAPI IP 未找到，无法绕过 CDN")
-
-    # Extract host:port from URL for --resolve
-    # e.g. "https://api.packyapi.com/v1/images/generations"
-    #        → host=api.packyapi.com, port=443
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    host = parsed.netloc
-    port = parsed.port or 443
-
-    headers = f"-H 'Authorization: Bearer {api_key}'"
-    if files:
-        # multipart: use -F for each field, -F for file
-        form_parts = []
-        file_field_name = list(files.keys())[0]
-        fname, fcontent, ftype = files[file_field_name]
-        # Write file content to a temp file for curl -F @path
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        tmp.write(fcontent)
-        tmp.close()
-        form_parts.append(f"-F '{file_field_name}=@{tmp.path};type={ftype}'")
-        for k, v in body.items():
-            form_parts.append(f"-F '{k}={v}'")
-        curl_cmd = (
-            f"curl -s -X POST "
-            f"--resolve '{host}:{port}:{ip}' "
-            f"-k "  # -k: skip TLS verification against IP (cert is for hostname)
-            f"{' '.join(form_parts)} "
-            f"https://{host}{parsed.path}"
-        )
-    else:
+    if files is None:
         # JSON body
-        body_json = json.dumps(body).replace("'", "'\\''")
-        curl_cmd = (
-            f"curl -s -X POST "
-            f"--resolve '{host}:{port}:{ip}' "
-            f"-k "
-            f"-H 'Content-Type: application/json' "
-f"-H 'Host: {host}' "
-            f"-H 'Authorization: Bearer {api_key}' "
-            f"-d '{body_json}' "
-            f"https://{host}{parsed.path}"
-        )
+        body_bytes = _json.dumps(data).encode("utf-8") if data else None
+        hdrs = {**headers, "Content-Type": "application/json"}
+        timeout_obj = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+            async with session.post(url, headers=hdrs, data=body_bytes) as resp:
+                buf = io_mod.BytesIO()
+                async for chunk in resp.content.iter_chunked(65536):
+                    buf.write(chunk)
+                resp_bytes = buf.getvalue()
+        log_info(f"aiohttp JSON 响应: {resp.status} {len(resp_bytes)} 字节")
+        return _json.loads(resp_bytes.decode("utf-8"))
+    else:
+        # Multipart form
+        form = aiohttp.FormData()
+        for field_name, (filename, file_bytes, content_type) in files:
+            form.add_field(field_name, file_bytes, filename=filename, content_type=content_type)
+        for k, v in (data or {}).items():
+            if v is not None:
+                form.add_field(k, str(v) if not isinstance(v, str) else v)
 
-    log_info(f"PackyAPI curl请求: {curl_cmd[:120]}...")
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp_path = tmp.name
+        tmp.close()
 
-    proc = await asyncio.create_subprocess_shell(
-        curl_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise TimeoutError(f"PackyAPI curl 请求超时 ({timeout}s)")
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"PackyAPI curl 失败，退出码 {proc.returncode}: {stderr.decode()[:300]}")
-
-    text = stdout.decode()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        raise RuntimeError(f"PackyAPI 返回非 JSON: {text[:300]}")
+        try:
+            timeout_obj = aiohttp.ClientTimeout(total=timeout)
+            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                async with session.post(url, headers=headers, data=form) as resp:
+                    log_info(f"aiohttp multipart 响应: {resp.status}")
+                    total_bytes = await _read_response_chunks(resp, tmp_path)
+                    log_info(f"aiohttp multipart 响应体: {total_bytes} 字节")
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                result = _json.load(f)
+            return result
+        finally:
+            os.unlink(tmp_path)
 
 
 def _round_to_multiple_of_16(n: int) -> int:
@@ -201,11 +177,50 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
         raise
 
 
+def validate_image_pixels(image_base64: str) -> dict:
+    """
+    Validate reference image dimensions against gpt-image-2 constraints.
+    Does NOT resize — only checks and logs warnings.
+    """
+    MAX_LONG = 3840
+    MIN_PIXELS = 655360
+    MAX_PIXELS = 8294400
+
+    try:
+        img_data = base64.b64decode(image_base64)
+        img = Image.open(io.BytesIO(img_data))
+        w, h = img.size
+        pixel_count = w * h
+
+        issues = []
+        if w > MAX_LONG or h > MAX_LONG:
+            issues.append(f"edge exceeds {MAX_LONG}px ({w}x{h})")
+        if w % 16 != 0 or h % 16 != 0:
+            issues.append(f"not multiple of 16 ({w}x{h})")
+        if pixel_count < MIN_PIXELS:
+            issues.append(f"pixels below minimum ({pixel_count} < {MIN_PIXELS})")
+        elif pixel_count > MAX_PIXELS:
+            issues.append(f"pixels above maximum ({pixel_count} > {MAX_PIXELS})")
+
+        valid = len(issues) == 0
+        if issues:
+            log_warn(f"Reference image validation: {'; '.join(issues)}")
+        else:
+            log_info(f"Reference image validation passed: {w}x{h}, {pixel_count} px")
+
+        return {"width": w, "height": h, "valid": valid}
+    except Exception as e:
+        log_error(f"validate_image_pixels failed: {e}")
+        return {"width": 0, "height": 0, "valid": False}
+
+
 async def generate_openai_image(
     prompt: str,
     model: str = "gpt-image-2",
     image_url: Optional[str] = None,
     image_base64: Optional[str] = None,
+    image_urls: Optional[List[str]] = None,
+    image_base64s: Optional[List[str]] = None,
     size: str = "1024x1024",
     n: int = 1,
     quality: Optional[str] = None,
@@ -230,7 +245,19 @@ async def generate_openai_image(
             "Authorization": f"Bearer {effective_api_key}",
         }
 
-        has_ref_image = bool(image_url or image_base64)
+        # Collect all reference images (list params take priority; singular are fallback)
+        all_urls = []
+        all_base64s = []
+        if image_urls:
+            all_urls.extend(image_urls)
+        elif image_url:
+            all_urls.append(image_url)
+        if image_base64s:
+            all_base64s.extend(image_base64s)
+        elif image_base64:
+            all_base64s.append(image_base64)
+
+        has_ref_image = bool(all_urls or all_base64s)
 
         if not has_ref_image:
             # Pure text-to-image via /v1/images/generations
@@ -249,7 +276,7 @@ async def generate_openai_image(
             log_info(f"调用 API：POST {url}", ctx={
                 "model": model,
                 "size": size,
-                "has_ref": bool(image_url or image_base64),
+                "has_ref": False,
             })
 
             # Timeout based on resolution:
@@ -262,12 +289,12 @@ async def generate_openai_image(
             else:
                 timeout = 600   # 1K
 
-            # PackyAPI: use curl --resolve to bypass CDN DNS timeout
+            # PackyAPI: use aiohttp chunked streaming
             if _is_packy(effective_base_url):
-                data = await _packy_curl_request(
+                data = await _aiohttp_post(
                     url=url,
-                    api_key=effective_api_key,
-                    body=body,
+                    headers=headers,
+                    data=body,
                     timeout=timeout,
                 )
             else:
@@ -290,31 +317,38 @@ async def generate_openai_image(
             # Image-to-image via /v1/images/edits (multipart)
             # Open-hk's generations endpoint 'image' param is broken (code 1001)
             url = f"{effective_base_url}/images/edits"
-            log_info(f"Image-to-image: POST {url}")
+            log_info(f"Image-to-image: POST {url} (refs: {len(all_base64s)} base64 + {len(all_urls)} urls)")
 
-            # Prepare reference image bytes
-            if image_base64:
-                processed_bytes, actual_size = preprocess_reference_image(image_base64, size)
-            elif image_url:
-                # Download and preprocess
+            # Download URL references and convert to base64
+            for u in all_urls:
                 async with httpx.AsyncClient() as client:
-                    img_resp = await client.get(image_url, timeout=60)
+                    img_resp = await client.get(u, timeout=60)
                     img_resp.raise_for_status()
                     img = Image.open(io.BytesIO(img_resp.content))
                     if img.mode != "RGB":
                         img = img.convert("RGB")
-                    # Convert to base64 and preprocess (same logic as image_base64)
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
-                    img_base64 = base64.b64encode(buf.getvalue()).decode()
-                    processed_bytes, actual_size = preprocess_reference_image(img_base64, size)
+                    all_base64s.append(base64.b64encode(buf.getvalue()).decode())
 
-            log_info(f"参考图处理完成：{len(processed_bytes)} 字节，尺寸 {actual_size}")
+            # First image: full preprocessing (determines output size)
+            first_b64 = all_base64s[0]
+            processed_bytes, actual_size = preprocess_reference_image(first_b64, size)
+            log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，尺寸 {actual_size}")
 
-            # multipart/form-data
-            files = {
-                "image": ("reference.png", processed_bytes, "image/png")
-            }
+            # Determine multipart field name per provider
+            is_packy = _is_packy(effective_base_url)
+            field_name = "image" if is_packy else "image[]"
+
+            # Build files list: first image + additional refs (validate-only, no resize)
+            files = [(field_name, ("reference.png", processed_bytes, "image/png"))]
+            for i, b64 in enumerate(all_base64s[1:], start=1):
+                validate_image_pixels(b64)
+                img_data = base64.b64decode(b64)
+                other_bytes = img_data  # send original bytes, no resize
+                files.append((field_name, (f"reference_{i}.png", other_bytes, "image/png")))
+                log_info(f"参考图[{i}] 像素验证完成，已加入请求")
+
             data = {
                 "model": model,
                 "prompt": prompt,
@@ -324,7 +358,12 @@ async def generate_openai_image(
             if quality:
                 data["quality"] = quality
 
-            log_info(f"提交编辑请求：POST {url}", ctx={"quality": quality, "size": actual_size})
+            log_info(f"提交编辑请求：POST {url}", ctx={
+                "quality": quality,
+                "size": actual_size,
+                "field": field_name,
+                "image_count": len(files),
+            })
 
             long_edge = max(int(s) for s in (actual_size or size).split("x"))
             if long_edge >= 2048:
@@ -332,15 +371,16 @@ async def generate_openai_image(
             else:
                 timeout = 600   # 1K
 
-            # PackyAPI: use curl --resolve to bypass CDN DNS timeout
-            if _is_packy(effective_base_url):
-                data = await _packy_curl_request(
+            # PackyAPI: use aiohttp chunked streaming (multipart)
+            if is_packy:
+                data = await _aiohttp_post(
                     url=url,
-                    api_key=effective_api_key,
-                    body=data,
+                    headers=headers,
                     files=files,
+                    data=data,
                     timeout=timeout,
                 )
+                log_info(f"编辑 API 返回：{str(data)[:500]}")
             else:
                 proxies = None
                 async with httpx.AsyncClient(proxies=proxies, timeout=httpx.Timeout(1200.0)) as client:
@@ -357,9 +397,6 @@ async def generate_openai_image(
         # Parse response
         images = []
         items = data.get("data")
-        if not items:
-            log_error(f"API 响应缺少 'data' 字段", ctx={"response_preview": str(data)[:300]})
-            return []
 
         for item in items:
             # OpenAI API returns 'url', some providers return 'b64_json'
