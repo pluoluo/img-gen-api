@@ -285,6 +285,31 @@ async def batch_delete_gallery_images(request: BatchDeleteRequest):
     return {"ok": True, "deleted": deleted}
 
 
+# ─── Prompt optimization proxy ──────────────────────────────────────────
+
+class OptimizePromptRequest(BaseModel):
+    prompt: str
+
+
+@router.post("/optimize-prompt")
+async def optimize_prompt(request: OptimizePromptRequest):
+    """Proxy to prompt-portal for AI prompt optimization."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.prompt_portal_url}/api/match",
+                json={"user_input": request.prompt},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {"optimized_prompt": data.get("optimized_prompt", request.prompt)}
+    except Exception as e:
+        log_warn(f"Prompt优化代理失败: {e}")
+        raise HTTPException(status_code=502, detail=f"Prompt optimization unavailable: {e}")
+
+
 # ─── Logs endpoints ────────────────────────────────────────────────────
 
 

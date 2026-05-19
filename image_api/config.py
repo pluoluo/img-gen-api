@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     packy_api_key: Optional[str] = None
     packy_base_url: str = "https://api-slb.packyapi.com/v1"
 
+    # Prompt Portal (for AI prompt optimization)
+    prompt_portal_url: str = "http://127.0.0.1:8768"
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000

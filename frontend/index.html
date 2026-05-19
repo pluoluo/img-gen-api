@@ -70,6 +70,29 @@ border-color: #667eea;
 
 textarea { min-height: 100px; resize: vertical; }
 
+.optimize-btn {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 10px;
+  background: transparent;
+  border: 1px solid #667eea;
+  border-radius: 12px;
+  color: #667eea;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  vertical-align: middle;
+}
+.optimize-btn:hover { background: rgba(102,126,234,0.15); color: #8b9cf7; }
+.optimize-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.optimize-btn.loading { animation: pulse 1.2s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .upload-area {
@@ -316,7 +339,7 @@ margin-top: 6px;
 </div>
 
 <div class="field">
-<label>提示词</label>
+<label>提示词 <button type="button" class="optimize-btn" id="optimizeBtn" title="AI 优化提示词">✨ 优化</button></label>
 <textarea id="prompt" placeholder="描述你想要生成的图片，越详细越好..." required></textarea>
 </div>
 
@@ -874,6 +897,41 @@ form.addEventListener('submit', async e => {
     errMsg.classList.add('show');
   } finally {
     generateBtn.disabled = false;
+  }
+});
+
+// ── AI prompt optimization ────────────────────────────────────────────
+const optimizeBtn = document.getElementById('optimizeBtn');
+
+optimizeBtn.addEventListener('click', async () => {
+  const raw = document.getElementById('prompt').value.trim();
+  if (!raw) {
+    document.getElementById('prompt').focus();
+    return;
+  }
+  optimizeBtn.disabled = true;
+  optimizeBtn.classList.add('loading');
+  optimizeBtn.textContent = '⏳ 优化中...';
+  try {
+    const resp = await fetch('/api/v1/optimize-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: raw }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'API ' + resp.status);
+    }
+    const data = await resp.json();
+    if (data.optimized_prompt) {
+      document.getElementById('prompt').value = data.optimized_prompt;
+    }
+  } catch (err) {
+    alert('优化失败: ' + err.message);
+  } finally {
+    optimizeBtn.disabled = false;
+    optimizeBtn.classList.remove('loading');
+    optimizeBtn.textContent = '✨ 优化';
   }
 });
 
