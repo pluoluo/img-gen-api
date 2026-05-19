@@ -65,6 +65,12 @@ def serve_gallery_thumb(filename: str):
     return FileResponse(fpath, media_type="image/png")
 
 
+@app.get("/favicon.svg")
+def favicon():
+    fpath = os.path.join(os.path.dirname(__file__), "..", "frontend", "favicon.svg")
+    return FileResponse(fpath, media_type="image/svg+xml")
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
