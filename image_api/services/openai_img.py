@@ -103,72 +103,74 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
 
         # ── Step 1: decode reference image ──────────────────────────────────────
         img_data = base64.b64decode(image_base64)
-        img = Image.open(io.BytesIO(img_data))
-        if img.mode != "RGB":
-            img = img.convert("RGB")
+        with Image.open(io.BytesIO(img_data)) as img:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
 
-        orig_w, orig_h = img.size
-        orig_ratio = orig_w / orig_h
+            orig_w, orig_h = img.size
+            orig_ratio = orig_w / orig_h
 
-        log_info(f"参考图：{orig_w}x{orig_h} (ratio {orig_ratio:.3f})")
+            log_info(f"参考图：{orig_w}x{orig_h} (ratio {orig_ratio:.3f})")
 
-        # ── Step 2: parse target_size ───────────────────────────────────────────
-        target_lower = target_size.lower().strip() if target_size else "auto"
-        is_auto = (target_lower == "auto")
+            # ── Step 2: parse target_size ───────────────────────────────────────────
+            target_lower = target_size.lower().strip() if target_size else "auto"
+            is_auto = (target_lower == "auto")
 
-        if is_auto:
-            raw_w, raw_h = orig_w, orig_h
-            log_info(f"Target: auto → preserve original {raw_w}x{raw_h}")
-        else:
-            try:
-                t_parts = target_lower.split("x")
-                t_w = int(t_parts[0])
-                t_h = int(t_parts[1]) if len(t_parts) == 2 else None
-            except (ValueError, IndexError, AttributeError):
+            if is_auto:
                 raw_w, raw_h = orig_w, orig_h
-                log_warn(f"Target parse failed → auto fallback to {raw_w}x{raw_h}")
+                log_info(f"Target: auto → preserve original {raw_w}x{raw_h}")
             else:
-                # Scale ref image so its WIDTH matches the target width
-                raw_w = t_w
-                raw_h = int(round(t_w / orig_ratio)) if orig_ratio > 0 else t_w
-                log_info(f"Target: {target_size} → scale ref to W={raw_w}, H={raw_h}")
+                try:
+                    t_parts = target_lower.split("x")
+                    t_w = int(t_parts[0])
+                    t_h = int(t_parts[1]) if len(t_parts) == 2 else None
+                except (ValueError, IndexError, AttributeError):
+                    raw_w, raw_h = orig_w, orig_h
+                    log_warn(f"Target parse failed → auto fallback to {raw_w}x{raw_h}")
+                else:
+                    # Scale ref image so its WIDTH matches the target width
+                    raw_w = t_w
+                    raw_h = int(round(t_w / orig_ratio)) if orig_ratio > 0 else t_w
+                    log_info(f"Target: {target_size} → scale ref to W={raw_w}, H={raw_h}")
 
-        # ── Step 3: enforce pixel range (BOTH auto and specific size) ──────────
-        pixel_count = raw_w * raw_h
-        if pixel_count > MAX_PIXELS:
-            scale = (MAX_PIXELS / pixel_count) ** 0.5
-            raw_w = int(raw_w * scale)
-            raw_h = int(raw_h * scale)
-            log_info(f"Pixel cap applied: → {raw_w}x{raw_h}")
-        elif pixel_count < MIN_PIXELS:
-            scale = (MIN_PIXELS / pixel_count) ** 0.5
-            raw_w = int(raw_w * scale)
-            raw_h = int(raw_h * scale)
-            log_info(f"Pixel floor applied: → {raw_w}x{raw_h}")
+            # ── Step 3: enforce pixel range (BOTH auto and specific size) ──────────
+            pixel_count = raw_w * raw_h
+            if pixel_count > MAX_PIXELS:
+                scale = (MAX_PIXELS / pixel_count) ** 0.5
+                raw_w = int(raw_w * scale)
+                raw_h = int(raw_h * scale)
+                log_info(f"Pixel cap applied: → {raw_w}x{raw_h}")
+            elif pixel_count < MIN_PIXELS:
+                scale = (MIN_PIXELS / pixel_count) ** 0.5
+                raw_w = int(raw_w * scale)
+                raw_h = int(raw_h * scale)
+                log_info(f"Pixel floor applied: → {raw_w}x{raw_h}")
 
-        # ── Step 4: align to nearest multiple of 16 ────────────────────────────
-        actual_w = _round_to_multiple_of_16(raw_w)
-        actual_h = _round_to_multiple_of_16(raw_h)
+            # ── Step 4: align to nearest multiple of 16 ────────────────────────────
+            actual_w = _round_to_multiple_of_16(raw_w)
+            actual_h = _round_to_multiple_of_16(raw_h)
 
-        # ── Step 5: clamp per-edge limits ───────────────────────────────────────
-        actual_w = max(actual_w, 512)
-        actual_h = max(actual_h, 512)
-        actual_w = min(actual_w, MAX_LONG)
-        actual_h = min(actual_h, MAX_LONG)
+            # ── Step 5: clamp per-edge limits ───────────────────────────────────────
+            actual_w = max(actual_w, 512)
+            actual_h = max(actual_h, 512)
+            actual_w = min(actual_w, MAX_LONG)
+            actual_h = min(actual_h, MAX_LONG)
 
-        actual_w = _round_to_multiple_of_16(actual_w)
-        actual_h = _round_to_multiple_of_16(actual_h)
+            actual_w = _round_to_multiple_of_16(actual_w)
+            actual_h = _round_to_multiple_of_16(actual_h)
 
-        log_info(f"Processed size: {actual_w}x{actual_h}")
+            log_info(f"Processed size: {actual_w}x{actual_h}")
 
-        resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
-        img_resized = img.resize((actual_w, actual_h), resample=resample)
-
-        output = io.BytesIO()
-        img_resized.save(output, format="PNG")
-        actual_size = f"{actual_w}x{actual_h}"
-        log_info(f"Final: {actual_w}x{actual_h} (ratio {actual_w/actual_h:.3f}, {actual_w*actual_h} pixels)")
-        return output.getvalue(), actual_size
+            resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+            img_resized = img.resize((actual_w, actual_h), resample=resample)
+            try:
+                output = io.BytesIO()
+                img_resized.save(output, format="PNG")
+                actual_size = f"{actual_w}x{actual_h}"
+                log_info(f"Final: {actual_w}x{actual_h} (ratio {actual_w/actual_h:.3f}, {actual_w*actual_h} pixels)")
+                return output.getvalue(), actual_size
+            finally:
+                img_resized.close()
 
     except Exception as e:
         log_error(f"preprocess_reference_image failed: {e}")
