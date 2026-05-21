@@ -320,8 +320,8 @@ async def generate_openai_image(
                     timeout=timeout,
                 )
             else:
-                proxies = None
-                async with httpx.AsyncClient(proxies=proxies, timeout=httpx.Timeout(1200.0)) as client:
+                proxy = None
+                async with httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(1200.0)) as client:
                     try:
                         response = await client.post(url, headers=headers, json=body, timeout=timeout)
                         raw_text = response.text
@@ -404,8 +404,8 @@ async def generate_openai_image(
                 )
                 log_info(f"编辑 API 返回：{str(data)[:500]}")
             else:
-                proxies = None
-                async with httpx.AsyncClient(proxies=proxies, timeout=httpx.Timeout(1200.0)) as client:
+                proxy = None
+                async with httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(1200.0)) as client:
                     try:
                         response = await client.post(url, headers=headers, files=files, data=data, timeout=timeout)
                         log_info(f"编辑响应 {response.status_code}", ctx={"status": response.status_code})
@@ -464,9 +464,9 @@ async def generate_openai_image(
                         b64_from_url = base64.b64encode(img_bytes).decode()
                         log_info(f"图片下载完成(wget)：{len(img_bytes)} 字节", ctx={"url": url_data})
                     else:
-                        proxies_dl = None
-                        log_info(f"开始下载图片(httpx)：{url_data}", ctx={"proxies": bool(proxies_dl)})
-                        async with httpx.AsyncClient(proxies=proxies_dl) as dl_client:
+                        proxy_dl = None
+                        log_info(f"开始下载图片(httpx)：{url_data}", ctx={"proxy": bool(proxy_dl)})
+                        async with httpx.AsyncClient(proxy=proxy_dl) as dl_client:
                             img_resp = await dl_client.get(url_data, timeout=180)
                             img_resp.raise_for_status()
                             img_bytes = img_resp.content
