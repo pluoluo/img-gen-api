@@ -883,12 +883,6 @@ form.addEventListener('submit', async e => {
 
     if (images && images.length > 0) {
       renderImages(images);
-      // Offer to jump to gallery
-      setTimeout(() => {
-        if (confirm('图片生成完成！是否跳转到图库查看？')) {
-          window.location.href = '/gallery';
-        }
-      }, 500);
     } else {
       throw new Error('未返回任何图片');
     }

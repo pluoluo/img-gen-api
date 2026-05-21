@@ -30,6 +30,7 @@ class Task:
     progress: int = 0  # 0-100
     images: List[dict] = field(default_factory=list)  # final results
     error: Optional[str] = None
+    raw_response: Optional[str] = None  # raw API response on failure
 
 
 _tasks: dict[str, Task] = {}

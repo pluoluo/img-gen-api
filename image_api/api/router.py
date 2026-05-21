@@ -45,6 +45,7 @@ class TaskStatusResponse(BaseModel):
     progress: int
     images: List[ImageResult]
     error: Optional[str] = None
+    raw_response: Optional[str] = None
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -199,6 +200,10 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         )
 
     except Exception as e:
+        from image_api.services.openai_img import APIResponseError
+        raw = None
+        if isinstance(e, APIResponseError):
+            raw = e.raw_body
         log_error(f"生成失败：{e}", ctx={
             "task_id": task_id,
             "model": request.model,
@@ -208,6 +213,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             task_id,
             status=TaskStatus.FAILED,
             error=str(e),
+            raw_response=raw,
             completed_at=datetime.now().isoformat(),
         )
 
@@ -225,6 +231,7 @@ async def get_task_status(task_id: str):
         progress=task.progress,
         images=[ImageResult(**img) for img in task.images],
         error=task.error,
+        raw_response=task.raw_response,
     )
 
 

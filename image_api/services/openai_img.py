@@ -46,7 +46,17 @@ async def _aiohttp_post(url: str, headers: dict, files: list = None,
                     buf.write(chunk)
                 resp_bytes = buf.getvalue()
         log_info(f"aiohttp JSON 响应: {resp.status} {len(resp_bytes)} 字节")
-        return _json.loads(resp_bytes.decode("utf-8"))
+        if resp.status != 200:
+            raw = resp_bytes.decode("utf-8", errors="replace")
+            log_error(f"PackyAPI 非200响应: HTTP {resp.status} | {raw[:500]}")
+            raise APIResponseError(resp.status, raw)
+        try:
+            result = _json.loads(resp_bytes.decode("utf-8"))
+        except Exception as e:
+            log_error(f"JSON 解析失败，原始响应内容:\n{resp_bytes.decode('utf-8', errors='replace')}")
+            raise
+        log_info(f"PackyAPI 完整响应: {resp_bytes.decode('utf-8', errors='replace')[:2000]}")
+        return result
     else:
         # Multipart form
         form = aiohttp.FormData()
@@ -69,9 +79,19 @@ async def _aiohttp_post(url: str, headers: dict, files: list = None,
                     log_info(f"aiohttp multipart 响应体: {total_bytes} 字节")
             with open(tmp_path, "r", encoding="utf-8") as f:
                 result = _json.load(f)
+            result_str = _json.dumps(result, ensure_ascii=False)
+            log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
             return result
         finally:
             os.unlink(tmp_path)
+
+
+class APIResponseError(Exception):
+    """Raised when the API returns a non-200 response with its raw body."""
+    def __init__(self, status: int, raw_body: str):
+        self.status = status
+        self.raw_body = raw_body
+        super().__init__(f"PackyAPI 返回 HTTP {status}")
 
 
 def _round_to_multiple_of_16(n: int) -> int:
