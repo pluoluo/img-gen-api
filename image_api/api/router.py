@@ -32,6 +32,7 @@ class GenerateRequest(BaseModel):
 class ImageResult(BaseModel):
     url: Optional[str] = None
     base64: Optional[str] = None
+    adjusted_size: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -200,11 +201,14 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         )
 
     except Exception as e:
+        import traceback
         from image_api.services.openai_img import APIResponseError
         raw = None
         if isinstance(e, APIResponseError):
             raw = e.raw_body
-        log_error(f"生成失败：{e}", ctx={
+        full_tb = traceback.format_exc()
+        tb_summary = full_tb.strip().split("\n")[-1]
+        log_error(f"生成失败：{tb_summary}", ctx={
             "task_id": task_id,
             "model": request.model,
             "sub_model": request.sub_model,
@@ -212,7 +216,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         update_task(
             task_id,
             status=TaskStatus.FAILED,
-            error=str(e),
+            error=f"{tb_summary}\n{full_tb}",
             raw_response=raw,
             completed_at=datetime.now().isoformat(),
         )
@@ -304,7 +308,7 @@ async def optimize_prompt(request: OptimizePromptRequest):
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(trust_env=False, timeout=60.0) as client:
             resp = await client.post(
                 f"{settings.prompt_portal_url}/api/match",
                 json={"user_input": request.prompt},

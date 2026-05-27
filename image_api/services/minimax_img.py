@@ -60,7 +60,7 @@ async def generate_minimax_image(
             "image_file": f"data:image/png;base64,{image_base64}",
         }]
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(trust_env=False) as client:
         response = await client.post(url, headers=headers, json=body, timeout=180)
         response.raise_for_status()
         data = response.json()

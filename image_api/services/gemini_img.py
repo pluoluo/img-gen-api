@@ -35,7 +35,7 @@ async def generate_gemini_image(
         "contents": [{"parts": parts}]
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(trust_env=False) as client:
         response = await client.post(url, headers=headers, json=body, timeout=180)
         response.raise_for_status()
         data = response.json()
