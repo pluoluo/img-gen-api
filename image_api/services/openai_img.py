@@ -1,6 +1,9 @@
+import asyncio
 import httpx
 import base64
 import io
+import os
+import tempfile
 from typing import Optional, List
 from PIL import Image
 
@@ -8,48 +11,51 @@ from image_api.config import settings
 from image_api.services.log_helper import log_info, log_warn, log_error
 
 
-# ── aiohttp chunked-streaming helpers ───────────────────────────────────────
+# ── HTTP POST helpers (httpx) ─────────────────────────────────────────────
 
 def _is_packy(base_url: str) -> bool:
     """Check if base_url belongs to PackyAPI."""
     return "packyapi.com" in (base_url or "")
 
 
-async def _read_response_chunks(resp, file_path: str) -> int:
-    """Stream response body to file in chunks. Avoids body-read hangs."""
-    import os
-    total = 0
-    with open(file_path, "wb") as f:
-        async for chunk in resp.content.iter_chunked(65536):
-            f.write(chunk)
-            total += len(chunk)
-    return total
-
-
-async def _aiohttp_post(url: str, headers: dict, files: list = None,
-                        data: dict = None, timeout: int = 600) -> dict:
+async def _httpx_post(url: str, headers: dict, files: list = None,
+                        data: dict = None, timeout: int = 900) -> dict:
     """
-    Chunked-streaming POST via aiohttp. Works for both JSON and multipart.
+    POST via httpx (HTTP/1.1, IPv4/IPv6 dual-stack).
     files=None → JSON body; files!=None → multipart form.
     """
-    import aiohttp, io as io_mod, json as _json, tempfile, os
+    import json as _json
+
+    timeout_cfg = httpx.Timeout(connect=30.0, read=float(timeout), write=60.0, pool=30.0)
 
     if files is None:
-        # JSON body
-        body_bytes = _json.dumps(data).encode("utf-8") if data else None
-        hdrs = {**headers, "Content-Type": "application/json"}
-        timeout_obj = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-            async with session.post(url, headers=hdrs, data=body_bytes) as resp:
-                buf = io_mod.BytesIO()
-                async for chunk in resp.content.iter_chunked(65536):
-                    buf.write(chunk)
-                resp_bytes = buf.getvalue()
-        log_info(f"aiohttp JSON 响应: {resp.status} {len(resp_bytes)} 字节")
-        if resp.status != 200:
+        # JSON body — use httpx. Force HTTP/1.1 (no HTTP/2 multiplexing that
+        # can cause connection confusion with some reverse proxies).
+        log_info(f"httpx POST {url} timeout={timeout}s body={_json.dumps(data, ensure_ascii=False)[:200]}")
+
+        last_error = None
+        for attempt in range(1, 4):  # up to 3 attempts
+            transport = httpx.AsyncHTTPTransport(retries=1, http2=False)
+            async with httpx.AsyncClient(transport=transport, trust_env=False,
+                                          timeout=timeout_cfg) as client:
+                try:
+                    resp = await client.post(url, headers=headers, json=data)
+                    break  # success — exit retry loop
+                except (httpx.ReadError, httpx.RemoteProtocolError,
+                        httpx.ConnectError, httpx.ConnectTimeout) as e:
+                    last_error = e
+                    if attempt < 3:
+                        wait = 2 ** attempt  # 2s, 4s, 8s
+                        log_warn(f"httpx 网络错误 (第{attempt}次): {e}, {wait}s后重试...")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
+        resp_bytes = resp.content
+        log_info(f"httpx JSON 响应: {resp.status_code} {len(resp_bytes)} 字节")
+        if resp.status_code != 200:
             raw = resp_bytes.decode("utf-8", errors="replace")
-            log_error(f"PackyAPI 非200响应: HTTP {resp.status} | {raw[:500]}")
-            raise APIResponseError(resp.status, raw)
+            log_error(f"PackyAPI 非200响应: HTTP {resp.status_code} | {raw[:500]}")
+            raise APIResponseError(resp.status_code, raw)
         try:
             result = _json.loads(resp_bytes.decode("utf-8"))
         except Exception as e:
@@ -58,32 +64,63 @@ async def _aiohttp_post(url: str, headers: dict, files: list = None,
         log_info(f"PackyAPI 完整响应: {resp_bytes.decode('utf-8', errors='replace')[:2000]}")
         return result
     else:
-        # Multipart form
-        form = aiohttp.FormData()
+        # Multipart form via httpx
+
+        # Build httpx files dict: group by field name, support multiple files per field
+        httpx_files: dict = {}
         for field_name, (filename, file_bytes, content_type) in files:
-            form.add_field(field_name, file_bytes, filename=filename, content_type=content_type)
+            ft = (filename, file_bytes, content_type)
+            if field_name in httpx_files:
+                existing = httpx_files[field_name]
+                httpx_files[field_name] = (existing if isinstance(existing, list) else [existing]) + [ft]
+            else:
+                httpx_files[field_name] = ft
+
+        # Text form fields
+        form_data = {}
         for k, v in (data or {}).items():
             if v is not None:
-                form.add_field(k, str(v) if not isinstance(v, str) else v)
+                form_data[k] = str(v) if not isinstance(v, str) else v
 
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp_path = tmp.name
         tmp.close()
 
-        try:
-            timeout_obj = aiohttp.ClientTimeout(total=timeout)
-            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-                async with session.post(url, headers=headers, data=form) as resp:
-                    log_info(f"aiohttp multipart 响应: {resp.status}")
-                    total_bytes = await _read_response_chunks(resp, tmp_path)
-                    log_info(f"aiohttp multipart 响应体: {total_bytes} 字节")
-            with open(tmp_path, "r", encoding="utf-8") as f:
-                result = _json.load(f)
-            result_str = _json.dumps(result, ensure_ascii=False)
-            log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
-            return result
-        finally:
-            os.unlink(tmp_path)
+        last_error = None
+        for attempt in range(1, 4):  # up to 3 attempts
+            tmp = tempfile.NamedTemporaryFile(delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            try:
+                transport = httpx.AsyncHTTPTransport(retries=1, http2=False)
+                async with httpx.AsyncClient(transport=transport, trust_env=False,
+                                              timeout=timeout_cfg) as client:
+                    async with client.stream("POST", url, headers=headers,
+                                              files=httpx_files, data=form_data) as resp:
+                        log_info(f"httpx multipart 响应: {resp.status_code}")
+                        total_bytes = 0
+                        with open(tmp_path, "wb") as f:
+                            async for chunk in resp.aiter_bytes(65536):
+                                f.write(chunk)
+                                total_bytes += len(chunk)
+                        log_info(f"httpx multipart 响应体: {total_bytes} 字节")
+                with open(tmp_path, "r", encoding="utf-8") as f:
+                    result = _json.load(f)
+                result_str = _json.dumps(result, ensure_ascii=False)
+                log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
+                return result
+            except (httpx.ReadError, httpx.RemoteProtocolError,
+                    httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_error = e
+                if attempt < 3:
+                    wait = 2 ** attempt
+                    log_warn(f"httpx multipart 网络错误 (第{attempt}次): {e}, {wait}s后重试...")
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
 
 class APIResponseError(Exception):
@@ -101,10 +138,138 @@ def _round_to_multiple_of_16(n: int) -> int:
     return lower if (n - lower) <= (upper - n) else upper
 
 
-def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[bytes, str]:
+# API constraints (open-hk gpt-image-2 / PackyAPI)
+_SIZE_MIN_LONG = 512
+_SIZE_MAX_LONG = 3840
+_SIZE_MIN_PIXELS = 655360
+_SIZE_MAX_PIXELS = 8294400
+
+
+def _constrain_pixel_dims(raw_w: int, raw_h: int) -> tuple[int, int]:
+    """Apply API pixel-count and edge-limit constraints to raw dimensions."""
+    MIN_LONG = _SIZE_MIN_LONG
+    MAX_LONG = _SIZE_MAX_LONG
+    MIN_PIXELS = _SIZE_MIN_PIXELS
+    MAX_PIXELS = _SIZE_MAX_PIXELS
+
+    pixel_count = raw_w * raw_h
+    if pixel_count > MAX_PIXELS:
+        scale = (MAX_PIXELS / pixel_count) ** 0.5
+        raw_w = int(raw_w * scale)
+        raw_h = int(raw_h * scale)
+        log_info(f"[size] pixel cap applied: → {raw_w}x{raw_h}")
+    elif pixel_count < MIN_PIXELS:
+        scale = (MIN_PIXELS / pixel_count) ** 0.5
+        raw_w = int(raw_w * scale)
+        raw_h = int(raw_h * scale)
+        log_info(f"[size] pixel floor applied: → {raw_w}x{raw_h}")
+
+    actual_w = _round_to_multiple_of_16(raw_w)
+    actual_h = _round_to_multiple_of_16(raw_h)
+
+    actual_w = max(actual_w, MIN_LONG)
+    actual_h = max(actual_h, MIN_LONG)
+    actual_w = min(actual_w, MAX_LONG)
+    actual_h = min(actual_h, MAX_LONG)
+
+    actual_w = _round_to_multiple_of_16(actual_w)
+    actual_h = _round_to_multiple_of_16(actual_h)
+
+    return actual_w, actual_h
+
+
+def validate_text_to_image_size(size: str) -> str:
+    """
+    Validate and adjust a user-provided pixel size for text-to-image (no reference).
+    Parses WxH, rounds to multiple of 16, clamps to valid API range.
+    Returns adjusted size string like "1024x1024".
+    """
+    if not size or size.strip().lower() == "auto":
+        return "1024x1024"
+
+    raw = size.strip().lower().replace("*", "x")
+    try:
+        parts = raw.split("x")
+        w = int(parts[0])
+        h = int(parts[1])
+    except (ValueError, IndexError):
+        log_warn(f"[size] cannot parse '{size}', falling back to 1024x1024")
+        return "1024x1024"
+
+    if w <= 0 or h <= 0:
+        log_warn(f"[size] non-positive dimension in '{size}', falling back to 1024x1024")
+        return "1024x1024"
+
+    actual_w, actual_h = _constrain_pixel_dims(w, h)
+    actual_size = f"{actual_w}x{actual_h}"
+
+    if actual_w != w or actual_h != h:
+        log_info(f"[size] text-to-image adjusted {w}x{h} → {actual_size}")
+
+    log_info(f"[size] text-to-image final: {actual_size} ({actual_w*actual_h} pixels)")
+    return actual_size
+
+
+def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tuple[int, int, str]:
+    """
+    Validate and adjust user-provided pixel dimensions for image-to-image.
+    Preserves the reference image's aspect ratio — scales proportionally
+    so WIDTH matches the target width (ignores target height).
+    Returns (adjusted_w, adjusted_h, adjusted_size_str).
+
+    API constraints (open-hk gpt-image-2 / PackyAPI):
+      - Max long edge ≤ 3840px
+      - Min long edge ≥ 512px (enforced after all other steps)
+      - Both edges must be multiples of 16
+      - Total pixels: 655,360 ~ 8,294,400
+    """
+    orig_ratio = orig_w / orig_h
+
+    target_lower = target_size.lower().strip() if target_size else "auto"
+    is_auto = (target_lower == "auto")
+
+    if is_auto:
+        raw_w, raw_h = orig_w, orig_h
+        log_info(f"[size] auto → preserve original {raw_w}x{raw_h}")
+    else:
+        try:
+            t_parts = target_lower.split("x")
+            t_w = int(t_parts[0])
+        except (ValueError, IndexError, AttributeError):
+            raw_w, raw_h = orig_w, orig_h
+            log_warn(f"[size] parse failed → auto fallback to {raw_w}x{raw_h}")
+        else:
+            raw_w = t_w
+            raw_h = int(round(t_w / orig_ratio)) if orig_ratio > 0 else t_w
+            log_info(f"[size] target={target_size} → scale ref to W={raw_w}, H={raw_h}")
+
+    actual_w, actual_h = _constrain_pixel_dims(raw_w, raw_h)
+    actual_size = f"{actual_w}x{actual_h}"
+
+    if not is_auto:
+        try:
+            t_parts = target_lower.split("x")
+            t_w_orig = int(t_parts[0])
+            t_h_orig = int(t_parts[1]) if len(t_parts) == 2 else int(round(t_w_orig / orig_ratio))
+            if t_w_orig != actual_w or t_h_orig != actual_h:
+                log_info(f"[size] adjusted {t_w_orig}x{t_h_orig} → {actual_w}x{actual_h} "
+                         f"(ratio preserved, API constraints applied)")
+        except (ValueError, IndexError, AttributeError):
+            pass
+
+    log_info(f"[size] final: {actual_w}x{actual_h} ({actual_w*actual_h} pixels, ratio {actual_w/actual_h:.3f})")
+    return actual_w, actual_h, actual_size
+
+
+def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[bytes, str, str]:
     """
     Resize reference image based on user's selected target_size, preserving
     original aspect ratio (no cropping).
+
+    Returns: (resized_bytes, actual_size_for_api, adjusted_size_str)
+
+    adjusted_size_str is the human-readable size after applying API constraints,
+    suitable for returning to the caller so they know what size was actually used.
 
     Constraints (open-hk gpt-image-2):
       - Max long edge ≤ 3840px
@@ -117,10 +282,6 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
         then apply 16x alignment + pixel constraints
     """
     try:
-        MAX_LONG = 3840
-        MIN_PIXELS = 655360
-        MAX_PIXELS = 8294400
-
         # ── Step 1: decode reference image ──────────────────────────────────────
         img_data = base64.b64decode(image_base64)
         with Image.open(io.BytesIO(img_data)) as img:
@@ -128,56 +289,12 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
                 img = img.convert("RGB")
 
             orig_w, orig_h = img.size
-            orig_ratio = orig_w / orig_h
+            log_info(f"参考图：{orig_w}x{orig_h} (ratio {orig_w/orig_h:.3f})")
 
-            log_info(f"参考图：{orig_w}x{orig_h} (ratio {orig_ratio:.3f})")
-
-            # ── Step 2: parse target_size ───────────────────────────────────────────
-            target_lower = target_size.lower().strip() if target_size else "auto"
-            is_auto = (target_lower == "auto")
-
-            if is_auto:
-                raw_w, raw_h = orig_w, orig_h
-                log_info(f"Target: auto → preserve original {raw_w}x{raw_h}")
-            else:
-                try:
-                    t_parts = target_lower.split("x")
-                    t_w = int(t_parts[0])
-                    t_h = int(t_parts[1]) if len(t_parts) == 2 else None
-                except (ValueError, IndexError, AttributeError):
-                    raw_w, raw_h = orig_w, orig_h
-                    log_warn(f"Target parse failed → auto fallback to {raw_w}x{raw_h}")
-                else:
-                    # Scale ref image so its WIDTH matches the target width
-                    raw_w = t_w
-                    raw_h = int(round(t_w / orig_ratio)) if orig_ratio > 0 else t_w
-                    log_info(f"Target: {target_size} → scale ref to W={raw_w}, H={raw_h}")
-
-            # ── Step 3: enforce pixel range (BOTH auto and specific size) ──────────
-            pixel_count = raw_w * raw_h
-            if pixel_count > MAX_PIXELS:
-                scale = (MAX_PIXELS / pixel_count) ** 0.5
-                raw_w = int(raw_w * scale)
-                raw_h = int(raw_h * scale)
-                log_info(f"Pixel cap applied: → {raw_w}x{raw_h}")
-            elif pixel_count < MIN_PIXELS:
-                scale = (MIN_PIXELS / pixel_count) ** 0.5
-                raw_w = int(raw_w * scale)
-                raw_h = int(raw_h * scale)
-                log_info(f"Pixel floor applied: → {raw_w}x{raw_h}")
-
-            # ── Step 4: align to nearest multiple of 16 ────────────────────────────
-            actual_w = _round_to_multiple_of_16(raw_w)
-            actual_h = _round_to_multiple_of_16(raw_h)
-
-            # ── Step 5: clamp per-edge limits ───────────────────────────────────────
-            actual_w = max(actual_w, 512)
-            actual_h = max(actual_h, 512)
-            actual_w = min(actual_w, MAX_LONG)
-            actual_h = min(actual_h, MAX_LONG)
-
-            actual_w = _round_to_multiple_of_16(actual_w)
-            actual_h = _round_to_multiple_of_16(actual_h)
+            # ── Step 2: validate and adjust dimensions ─────────────────────────────
+            actual_w, actual_h, adjusted_size = validate_and_adjust_size(
+                target_size, orig_w, orig_h
+            )
 
             log_info(f"Processed size: {actual_w}x{actual_h}")
 
@@ -186,9 +303,10 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
             try:
                 output = io.BytesIO()
                 img_resized.save(output, format="PNG")
-                actual_size = f"{actual_w}x{actual_h}"
+                actual_size_str = f"{actual_w}x{actual_h}"
                 log_info(f"Final: {actual_w}x{actual_h} (ratio {actual_w/actual_h:.3f}, {actual_w*actual_h} pixels)")
-                return output.getvalue(), actual_size
+                # Return: (resized_bytes, actual_size_for_api, adjusted_size_str)
+                return output.getvalue(), actual_size_str, adjusted_size
             finally:
                 img_resized.close()
 
@@ -280,15 +398,17 @@ async def generate_openai_image(
             all_base64s.append(image_base64)
 
         has_ref_image = bool(all_urls or all_base64s)
+        adjusted_size = None  # default: no reference image means no size adjustment needed
 
         if not has_ref_image:
             # Pure text-to-image via /v1/images/generations
+            adjusted_size = validate_text_to_image_size(size)
             url = f"{effective_base_url}/images/generations"
             body = {
                 "model": model,
                 "prompt": prompt,
                 "n": n,
-                "size": size,
+                "size": adjusted_size,
             }
             if quality:
                 body["quality"] = quality
@@ -305,35 +425,14 @@ async def generate_openai_image(
             # 4K: long edge > 2048 (up to 3840)
             # 2K: long edge == 2048
             # 1K: long edge < 2048
-            long_edge = max(int(s) for s in size.split("x"))
-            if long_edge >= 2048:
-                timeout = 1200  # 2K/4K（支持中转排队）
-            else:
-                timeout = 600   # 1K
+            timeout = 900
 
-            # PackyAPI: use aiohttp chunked streaming
-            if _is_packy(effective_base_url):
-                data = await _aiohttp_post(
-                    url=url,
-                    headers=headers,
-                    data=body,
-                    timeout=timeout,
-                )
-            else:
-                proxy = None
-                async with httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(1200.0)) as client:
-                    try:
-                        response = await client.post(url, headers=headers, json=body, timeout=timeout)
-                        raw_text = response.text
-                        log_info(f"API 响应 {response.status_code}，body {len(raw_text)} 字节", ctx={
-                            "status": response.status_code,
-                            "body_preview": raw_text[:300],
-                        })
-                    except Exception as e:
-                        log_error(f"HTTP 请求失败：{type(e).__name__}: {e}")
-                        raise
-                    response.raise_for_status()
-                    data = response.json()
+            data = await _httpx_post(
+                url=url,
+                headers=headers,
+                data=body,
+                timeout=timeout,
+            )
 
         else:
             # Image-to-image via /v1/images/edits (multipart)
@@ -343,8 +442,9 @@ async def generate_openai_image(
 
             # Download URL references and convert to base64
             for u in all_urls:
-                async with httpx.AsyncClient() as client:
-                    img_resp = await client.get(u, timeout=60)
+                async with httpx.AsyncClient(trust_env=False,
+                                              timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=10.0)) as client:
+                    img_resp = await client.get(u)
                     img_resp.raise_for_status()
                     img = Image.open(io.BytesIO(img_resp.content))
                     if img.mode != "RGB":
@@ -355,8 +455,8 @@ async def generate_openai_image(
 
             # First image: full preprocessing (determines output size)
             first_b64 = all_base64s[0]
-            processed_bytes, actual_size = preprocess_reference_image(first_b64, size)
-            log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，尺寸 {actual_size}")
+            processed_bytes, actual_size, adjusted_size = preprocess_reference_image(first_b64, size)
+            log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，API尺寸={actual_size}，用户尺寸={adjusted_size}")
 
             # Determine multipart field name per provider
             is_packy = _is_packy(effective_base_url)
@@ -387,34 +487,16 @@ async def generate_openai_image(
                 "image_count": len(files),
             })
 
-            long_edge = max(int(s) for s in (actual_size or size).split("x"))
-            if long_edge >= 2048:
-                timeout = 1200  # 2K/4K（支持中转排队）
-            else:
-                timeout = 600   # 1K
+            timeout = 900
 
-            # PackyAPI: use aiohttp chunked streaming (multipart)
-            if is_packy:
-                data = await _aiohttp_post(
-                    url=url,
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=timeout,
-                )
-                log_info(f"编辑 API 返回：{str(data)[:500]}")
-            else:
-                proxy = None
-                async with httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(1200.0)) as client:
-                    try:
-                        response = await client.post(url, headers=headers, files=files, data=data, timeout=timeout)
-                        log_info(f"编辑响应 {response.status_code}", ctx={"status": response.status_code})
-                        response.raise_for_status()
-                        data = response.json()
-                        log_info(f"编辑 API 返回：{str(data)[:300]}")
-                    except httpx.HTTPStatusError as e:
-                        log_error(f"编辑请求失败 {e.response.status_code}：{e.response.text[:500]}")
-                        raise
+            data = await _httpx_post(
+                url=url,
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=timeout,
+            )
+            log_info(f"编辑 API 返回：{str(data)[:500]}")
 
         # Parse response
         images = []
@@ -438,7 +520,6 @@ async def generate_openai_image(
                     # external-resources.packyapi.com: curl/httpx systematically fail
                     # with SSL_ERROR_SYSCALL on this network, wget works reliably.
                     if "external-resources.packyapi.com" in url_data:
-                        import asyncio, tempfile, os
                         log_info(f"开始下载图片(wget)：{url_data}")
                         tmp = tempfile.NamedTemporaryFile(delete=False)
                         tmp_path = tmp.name
@@ -464,10 +545,10 @@ async def generate_openai_image(
                         b64_from_url = base64.b64encode(img_bytes).decode()
                         log_info(f"图片下载完成(wget)：{len(img_bytes)} 字节", ctx={"url": url_data})
                     else:
-                        proxy_dl = None
-                        log_info(f"开始下载图片(httpx)：{url_data}", ctx={"proxy": bool(proxy_dl)})
-                        async with httpx.AsyncClient(proxy=proxy_dl) as dl_client:
-                            img_resp = await dl_client.get(url_data, timeout=180)
+                        log_info(f"开始下载图片(httpx)：{url_data}")
+                        async with httpx.AsyncClient(trust_env=False,
+                                                        timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=10.0)) as dl_client:
+                            img_resp = await dl_client.get(url_data)
                             img_resp.raise_for_status()
                             img_bytes = img_resp.content
                             b64_from_url = base64.b64encode(img_bytes).decode()
@@ -486,9 +567,14 @@ async def generate_openai_image(
             else:
                 log_warn(f"返回项缺少 url 和 b64_json", ctx={"item": item})
 
+        # Attach adjusted_size to each image so the caller knows what size was used
+        for img in images:
+            img["adjusted_size"] = adjusted_size
+
         return images
 
     except Exception as e:
-        log_error(f"generate_openai_image 失败：{e}")
-        traceback.print_exc()
+        tb_lines = traceback.format_exc().strip().split("\n")
+        tb_summary = tb_lines[-1] if tb_lines else str(e)
+        log_error(f"generate_openai_image 失败：{tb_summary}")
         raise
