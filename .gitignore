@@ -7,3 +7,6 @@ __pycache__/
 .DS_Store
 *.bak
 *.log
+venv/
+SESSION_LOG.md
+test_refs/

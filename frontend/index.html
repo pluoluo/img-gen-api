@@ -392,6 +392,7 @@ margin-top: 6px;
 <div class="loader" id="loader">
 <div class="spinner"></div>
 <p style="color:#666;font-size:0.9rem" id="loaderText">已提交，等待任务启动...</p>
+<p style="color:#444;font-size:0.7rem;margin-top:4px;">任务ID: <code id="loaderTaskId" style="color:#667eea;user-select:all;">-</code></p>
 <div class="progress-bar-wrap" id="progressWrap" style="display:none;margin-top:12px;">
   <div class="progress-bar" id="progressBar" style="height:6px;background:#2a2a35;border-radius:3px;overflow:hidden;">
     <div id="progressFill" style="height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.4s ease;"></div>
@@ -403,6 +404,20 @@ margin-top: 6px;
 <div class="err-msg" id="errMsg"></div>
 
 <div class="images-grid" id="imagesGrid"></div>
+</div>
+
+<!-- 任务查询 -->
+<div class="card" style="margin-top:20px;">
+<div class="field">
+<label>查询任务结果</label>
+<div style="display:flex;gap:8px;">
+  <input type="text" id="lookupTaskId" placeholder="输入 task_id 找回丢失的生成结果" style="flex:1;">
+  <button type="button" id="lookupBtn" class="optimize-btn" style="margin:0;padding:6px 16px;white-space:nowrap;">查询</button>
+</div>
+<p style="color:#555;font-size:0.7rem;margin-top:6px;">如果前端断连但生成已完成，可凭任务ID找回图片</p>
+</div>
+<div class="err-msg" id="lookupErr"></div>
+<div class="images-grid" id="lookupImagesGrid"></div>
 </div>
 </div>
 
@@ -790,10 +805,10 @@ function showGenerating(taskId) {
   });
 }
 
-function renderImages(images) {
+function renderImagesTo(images, gridEl) {
   if (!images.length) return;
-  imagesGrid.innerHTML = '';
-  imagesGrid.classList.add('show');
+  gridEl.innerHTML = '';
+  gridEl.classList.add('show');
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
@@ -824,9 +839,20 @@ function renderImages(images) {
     openBtn.addEventListener('click', () => openImageModal(dataUrl));
     actions.appendChild(openBtn);
 
+    if (img.adjusted_size) {
+      const sizeTag = document.createElement('span');
+      sizeTag.style.cssText = 'font-size:0.7rem;color:#555;padding:7px 4px;';
+      sizeTag.textContent = img.adjusted_size;
+      actions.appendChild(sizeTag);
+    }
+
     card.appendChild(actions);
-    imagesGrid.appendChild(card);
+    gridEl.appendChild(card);
   }
+}
+
+function renderImages(images) {
+  renderImagesTo(images, document.getElementById('imagesGrid'));
 }
 
 form.addEventListener('submit', async e => {
@@ -874,6 +900,7 @@ form.addEventListener('submit', async e => {
 
     const data = await resp.json();
     const taskId = data.task_id;
+    document.getElementById('loaderTaskId').textContent = taskId;
 
     // Wait for generation to finish — this Promise resolves on completed, rejects on failed
     const images = await showGenerating(taskId);
@@ -924,6 +951,48 @@ optimizeBtn.addEventListener('click', async () => {
     optimizeBtn.disabled = false;
     optimizeBtn.classList.remove('loading');
     optimizeBtn.textContent = '✨ 优化';
+  }
+});
+
+// -- Task lookup (for recovering lost results) --
+document.getElementById('lookupBtn').addEventListener('click', async () => {
+  const taskId = document.getElementById('lookupTaskId').value.trim();
+  const errEl = document.getElementById('lookupErr');
+  const gridEl = document.getElementById('lookupImagesGrid');
+  errEl.classList.remove('show');
+  gridEl.classList.remove('show');
+  gridEl.innerHTML = '';
+
+  if (!taskId) return;
+
+  const lookupBtn = document.getElementById('lookupBtn');
+  lookupBtn.disabled = true;
+  lookupBtn.textContent = '查询中...';
+
+  try {
+    const resp = await fetch(`/api/v1/tasks/${taskId}`);
+    if (!resp.ok) throw new Error(`任务不存在 (${resp.status})`);
+    const data = await resp.json();
+
+    if (data.status === 'completed' && data.images && data.images.length > 0) {
+      renderImagesTo(data.images, gridEl);
+      gridEl.classList.add('show');
+    } else if (data.status === 'failed') {
+      errEl.textContent = '任务失败: ' + (data.error || '未知错误');
+      errEl.classList.add('show');
+    } else if (data.status === 'running' || data.status === 'pending') {
+      errEl.textContent = '任务仍在生成中，请稍后再查询';
+      errEl.classList.add('show');
+      errEl.style.borderColor = '#667eea';
+      errEl.style.color = '#667eea';
+      errEl.style.background = 'rgba(102,126,234,0.1)';
+    }
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('show');
+  } finally {
+    lookupBtn.disabled = false;
+    lookupBtn.textContent = '查询';
   }
 });
 
