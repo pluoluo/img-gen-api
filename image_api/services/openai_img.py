@@ -175,6 +175,16 @@ def _constrain_pixel_dims(raw_w: int, raw_h: int) -> tuple[int, int]:
     actual_w = _round_to_multiple_of_16(actual_w)
     actual_h = _round_to_multiple_of_16(actual_h)
 
+    # 16-multiple rounding may have undone the pixel-floor scaling.
+    # Bump the smaller dimension up one notch at a time until the budget is met.
+    while actual_w * actual_h < MIN_PIXELS:
+        if actual_w <= actual_h and actual_w < MAX_LONG:
+            actual_w = _round_to_multiple_of_16(actual_w + 16)
+        elif actual_h < MAX_LONG:
+            actual_h = _round_to_multiple_of_16(actual_h + 16)
+        else:
+            break  # both edges at max, can't go higher
+
     return actual_w, actual_h
 
 
