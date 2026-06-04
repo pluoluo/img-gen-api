@@ -592,14 +592,6 @@ sizeSel.addEventListener('change', () => {
   document.getElementById('sizeSelectWrap').style.display = isCustom ? 'none' : '';
   document.getElementById('sizeCustom').style.display = isCustom ? '' : 'none';
   if (isCustom) document.getElementById('sizeCustom').focus();
-  // Warn on very high resolutions (total pixels > 5,785,600)
-  const parts = sizeSel.value.split('x');
-  if (parts.length === 2) {
-    const w = parseInt(parts[0]), h = parseInt(parts[1]);
-    if (w * h > 5785600) {
-      alert('注意：总像素超过 5785600 时 PackyAPI 可能生成失败，可以重试或降低分辨率。');
-    }
-  }
 });
 
 // upload handling
@@ -795,7 +787,7 @@ function showGenerating(taskId) {
           clearInterval(progressTimer);
           pollInterval = null;
           loader.classList.remove('show');
-          reject(new Error(data.error || '生成失败'));
+          reject(new Error(data.error || '生成失败，可尝试降低分辨率'));
         }
         // else running: keep using time-based progress, don't override
       } catch (err) {
@@ -895,7 +887,7 @@ form.addEventListener('submit', async e => {
 
     if (!resp.ok) {
       const err = await resp.json();
-      throw new Error(err.detail || '生成失败');
+      throw new Error(err.detail || '生成失败，可尝试降低分辨率');
     }
 
     const data = await resp.json();
