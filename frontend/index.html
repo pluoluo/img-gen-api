@@ -316,6 +316,7 @@ margin-top: 6px;
 <p class="subtitle">OpenAI / Gemini / MiniMax 图片生成服务</p>
 <a href="/gallery" style="position:absolute;top:20px;right:20px;font-size:0.8rem;color:#667eea;text-decoration:none;">🖼️ 图库</a>
 <a href="/logs" style="position:absolute;top:20px;right:80px;font-size:0.8rem;color:#667eea;text-decoration:none;">📋 日志</a>
+<a id="promptLink" style="position:absolute;top:20px;right:140px;font-size:0.8rem;color:#667eea;text-decoration:none;">💡 Prompt</a>
 </header>
 
 <div class="card">
@@ -324,8 +325,7 @@ margin-top: 6px;
 <div class="field">
 <label>Provider</label>
 <select id="provider">
-<option value="openai">OpenAI-HK</option>
-<option value="packy" selected>PackyAPI</option>
+<option value="openai" selected>OpenAI-HK</option>
 <option value="gemini">Gemini</option>
 <option value="minimax">MiniMax</option>
 </select>
@@ -367,12 +367,7 @@ margin-top: 6px;
 </div>
 <div class="field">
 <label>数量</label>
-<select id="n">
-<option value="1">1</option>
-<option value="2">2</option>
-<option value="3">3</option>
-<option value="4">4</option>
-</select>
+<div style="padding:11px 14px;background:#1a1a22;border:1px solid #2a2a35;border-radius:8px;color:#e5e5e5;font-size:0.95rem;">1</div>
 </div>
 </div>
 
@@ -428,12 +423,13 @@ margin-top: 6px;
 </div>
 
 <script>
+// Prompt 链接：使用当前访问地址，端口改为 8769
+document.getElementById('promptLink').href = window.location.protocol + '//' + window.location.hostname + ':8769';
+
 const MODELS = {
 openai: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
-],
-packy: [
-{ value: 'gpt-image-2', label: 'GPT Image 2' },
+{ value: 'gpt-image-2-vip', label: 'GPT Image 2 VIP (高清)' },
 ],
 gemini: [
 { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
@@ -446,7 +442,8 @@ minimax: [
 };
 
 const HINTS = {
-'gpt-image-2': '质量/尺寸扣费相同，默认中质量+自动',
+'gpt-image-2': '1K 及以下尺寸，价格较低',
+'gpt-image-2-vip': '2K/4K 高清尺寸，价格为标准版两倍',
 'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
 'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
 'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
@@ -462,7 +459,7 @@ const SIZE_OVERRIDES = {
 'image-01': { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] },
 };
 
-const QUALITY_MODELS = ['gpt-image-2'];
+const QUALITY_MODELS = ['gpt-image-2', 'gpt-image-2-vip'];
 
 const providerSel = document.getElementById('provider');
 const subModelSel = document.getElementById('subModel');
@@ -533,41 +530,43 @@ opt.textContent = opts.labels[i];
 sizeSel.appendChild(opt);
 });
 } else {
-    // gpt-image-2 pixel sizes — open-hk 新增 5:4、4:5、21:9 等比例（2026-05-07）
-    // 尺寸约束：最大边 ≤ 3840，两边 16 倍数，长宽比 ≤ 3:1，总像素 655360~8294400
-    // 有参考图时默认 auto（由 JS 在 handleFile 中设置）
+    // gpt-image-2 pixel sizes
+    // 1659x948 ≈ 1,572,852 像素，是 gpt-image-2 能生成的最高像素
+    // 超过此像素的尺寸需要使用 gpt-image-2-vip（价格翻倍）
     const defaults = [
-    // 预设尺寸（gpt-image-2 默认 2K 16:9）
-    { value: '3200x1808', label: '3200 x 1808 (2K 16:9)' },
-    { value: 'auto', label: '自动' },
+    { value: '1659x948', label: '1659 x 948 (1K 16:9) ★默认' },
+    { value: 'auto', label: '自动（保持参考图比例）' },
+    { value: '1280x720', label: '1280 x 720 (1K 16:9)' },
+    { value: '1024x1024', label: '1024 x 1024 (1K 1:1)' },
+    { value: '720x1280', label: '720 x 1280 (1K 9:16)' },
+    { value: '1024x768', label: '1024 x 768 (1K 4:3)' },
+    { value: '768x1024', label: '768 x 1024 (1K 3:4)' },
+    { value: '1008x672', label: '1008 x 672 (1K 3:2)' },
+    { value: '672x1008', label: '672 x 1008 (1K 2:3)' },
+    { value: '1040x832', label: '1040 x 832 (1K 5:4)' },
+    { value: '832x1040', label: '832 x 1040 (1K 4:5)' },
+    { value: '1344x576', label: '1344 x 576 (1K 21:9)' },
+    { value: '__sep1__', label: '── VIP 高清 (2K/4K，价格翻倍) ──' },
+    { value: '2048x1152', label: '2048 x 1152 (2K 16:9)' },
+    { value: '3200x1808', label: '3200 x 1808 (2K 16:9 宽)' },
+    { value: '3840x2160', label: '3840 x 2160 (4K 16:9)' },
     { value: '2048x2048', label: '2048 x 2048 (2K 1:1)' },
     { value: '2880x2880', label: '2880 x 2880 (4K 1:1)' },
-    { value: '1280x720',   label: '1280 x 720 (1K 16:9)' },
-    { value: '2048x1152', label: '2048 x 1152 (2K 16:9)' },
-    { value: '3840x2160', label: '3840 x 2160 (4K 16:9)' },
-    { value: '720x1280',   label: '720 x 1280 (1K 9:16)' },
     { value: '1152x2048', label: '1152 x 2048 (2K 9:16)' },
     { value: '2160x3840', label: '2160 x 3840 (4K 9:16)' },
-    { value: '1024x768',   label: '1024 x 768 (1K 4:3)' },
     { value: '2048x1536', label: '2048 x 1536 (2K 4:3)' },
     { value: '3264x2448', label: '3264 x 2448 (4K 4:3)' },
-    { value: '768x1024',   label: '768 x 1024 (1K 3:4)' },
     { value: '1536x2048', label: '1536 x 2048 (2K 3:4)' },
     { value: '2448x3264', label: '2448 x 3264 (4K 3:4)' },
-    { value: '1008x672',   label: '1008 x 672 (1K 3:2)' },
     { value: '2064x1376', label: '2064 x 1376 (2K 3:2)' },
     { value: '3504x2336', label: '3504 x 2336 (4K 3:2)' },
-    { value: '672x1008',   label: '672 x 1008 (1K 2:3)' },
     { value: '1376x2064', label: '1376 x 2064 (2K 2:3)' },
     { value: '2336x3504', label: '2336 x 3504 (4K 2:3)' },
-    { value: '1040x832',   label: '1040 x 832 (1K 5:4)' },
     { value: '2080x1664', label: '2080 x 1664 (2K 5:4)' },
     { value: '3200x2560', label: '3200 x 2560 (4K 5:4)' },
-    { value: '832x1040',   label: '832 x 1040 (1K 4:5)' },
     { value: '1664x2080', label: '1664 x 2080 (2K 4:5)' },
     { value: '2560x3200', label: '2560 x 3200 (4K 4:5)' },
-    { value: '1344x576',   label: '1344 x 576 (1K 21:9)' },
-    { value: '2016x864',   label: '2016 x 864 (2K 21:9)' },
+    { value: '2016x864', label: '2016 x 864 (2K 21:9)' },
     { value: '3808x1632', label: '3808 x 1632 (4K 21:9)' },
     { value: '__custom__', label: '自定义...' },
     ];
@@ -576,13 +575,39 @@ sizeSel.appendChild(opt);
     const opt = document.createElement('option');
     opt.value = d.value;
     opt.textContent = d.label;
+    if (d.value.startsWith('__sep')) { opt.disabled = true; opt.style.color = '#555'; }
     sizeSel.appendChild(opt);
     });
     // Reset custom input visibility when switching models
     sizeSel.selectedIndex = 0;
     document.getElementById('sizeCustom').style.display = 'none';
     document.getElementById('sizeSelectWrap').style.display = '';
+    updateModelForSize();
 }
+}
+
+// 根据尺寸自动选择模型：≤1659x948 像素用 gpt-image-2，超过用 gpt-image-2-vip
+const VIP_PIXEL_THRESHOLD = 1659 * 948; // 1,572,852
+
+function updateModelForSize() {
+  const prov = providerSel.value;
+  if (prov !== 'openai') return;
+
+  const val = sizeSel.value;
+  if (val === 'auto' || val === '__custom__') {
+    subModelSel.value = 'gpt-image-2';
+  } else {
+    const parts = val.split('x');
+    const w = parseInt(parts[0]);
+    const h = parseInt(parts[1]);
+    if (!isNaN(w) && !isNaN(h) && w * h > VIP_PIXEL_THRESHOLD) {
+      subModelSel.value = 'gpt-image-2-vip';
+    } else {
+      subModelSel.value = 'gpt-image-2';
+    }
+  }
+  // 只更新提示文字，不重建尺寸下拉框（避免重置选中项）
+  modelHint.textContent = HINTS[subModelSel.value] || '';
 }
 
 providerSel.addEventListener('change', rebuildModels);
@@ -592,6 +617,25 @@ sizeSel.addEventListener('change', () => {
   document.getElementById('sizeSelectWrap').style.display = isCustom ? 'none' : '';
   document.getElementById('sizeCustom').style.display = isCustom ? '' : 'none';
   if (isCustom) document.getElementById('sizeCustom').focus();
+  if (!isCustom && sizeSel.value !== 'auto') updateModelForSize();
+});
+
+// 自定义尺寸输入时也自动切换模型
+document.getElementById('sizeCustom').addEventListener('blur', () => {
+  if (providerSel.value !== 'openai') return;
+  const raw = document.getElementById('sizeCustom').value.trim().replace(/\*/g, 'x');
+  const parts = raw.split('x');
+  if (parts.length === 2) {
+    const pw = parseInt(parts[0]), ph = parseInt(parts[1]);
+    if (!isNaN(pw) && !isNaN(ph)) {
+      if (pw * ph > VIP_PIXEL_THRESHOLD) {
+        subModelSel.value = 'gpt-image-2-vip';
+      } else {
+        subModelSel.value = 'gpt-image-2';
+      }
+      modelHint.textContent = HINTS[subModelSel.value] || '';
+    }
+  }
 });
 
 // upload handling
@@ -617,8 +661,9 @@ function handleFiles(files) {
 selectedFiles = selectedFiles.concat(files);
 renderPreviews();
 // 有参考图时默认自动（保持原图比例）
-if (selectedFiles.length > 0 && subModelSel.value === 'gpt-image-2') {
+if (selectedFiles.length > 0 && subModelSel.value.startsWith('gpt-image-2')) {
   sizeSel.value = 'auto';
+  updateModelForSize();
 }
 }
 
@@ -862,12 +907,27 @@ form.addEventListener('submit', async e => {
     let sizeVal = sizeSel.value === '__custom__' ? document.getElementById('sizeCustom').value.trim() : sizeSel.value;
     // 支持 1920*1080 格式（* 号）
     sizeVal = sizeVal.replace(/\*/g, 'x');
+
+    // 根据实际尺寸自动选择模型
+    let finalModel = subModelSel.value;
+    if (providerSel.value === 'openai' && sizeVal && sizeVal !== 'auto') {
+      const parts = sizeVal.split('x');
+      if (parts.length === 2) {
+        const pw = parseInt(parts[0]), ph = parseInt(parts[1]);
+        if (!isNaN(pw) && !isNaN(ph) && pw * ph > VIP_PIXEL_THRESHOLD) {
+          finalModel = 'gpt-image-2-vip';
+        } else {
+          finalModel = 'gpt-image-2';
+        }
+      }
+    }
+
     const body = {
       model: providerSel.value,
-      sub_model: subModelSel.value,
+      sub_model: finalModel,
       prompt: document.getElementById('prompt').value,
       size: sizeVal,
-      n: parseInt(document.getElementById('n').value),
+      n: 1,
     };
 
     const quality = document.getElementById('quality').value;

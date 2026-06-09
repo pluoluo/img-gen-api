@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 class GenerateRequest(BaseModel):
-    model: str = "packy"
+    model: str = "openai"
     sub_model: str = "gpt-image-2"
     prompt: str
     image_url: Optional[str] = None

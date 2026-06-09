@@ -53,7 +53,7 @@ def serve_gallery_image(filename: str):
     fpath = f"/vol1/1000/note/memory/AI生成图片/{filename}"
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(fpath, media_type="image/png")
+    return FileResponse(fpath, media_type="image/png", headers={"Cache-Control": "public, max-age=604800, immutable"})
 
 
 @app.get("/gallery/thumb/{filename}")
@@ -62,7 +62,7 @@ def serve_gallery_thumb(filename: str):
     fpath = f"/vol1/1000/note/memory/AI生成图片/thumbs/{filename}"
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(fpath, media_type="image/png")
+    return FileResponse(fpath, media_type="image/png", headers={"Cache-Control": "public, max-age=604800, immutable"})
 
 
 @app.get("/favicon.svg")
