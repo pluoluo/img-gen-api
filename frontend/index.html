@@ -444,8 +444,20 @@ margin-top: 6px;
 
 <script>
 // Prompt 链接：使用服务端注入的 PROMPT_PORTAL_URL 配置
-document.getElementById('promptLink').href = window.__PROMPT_PORTAL_URL__ ||
-    (window.location.protocol + '//' + window.location.hostname + ':8769');
+// 将 localhost/127.0.0.1 替换为当前访问的 hostname，使其他电脑也能访问
+(function() {
+    var url = window.__PROMPT_PORTAL_URL__ ||
+        (window.location.protocol + '//' + window.location.hostname + ':8769');
+    try {
+        var u = new URL(url);
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '0.0.0.0') {
+            u.hostname = window.location.hostname;
+        }
+        document.getElementById('promptLink').href = u.toString();
+    } catch (_) {
+        document.getElementById('promptLink').href = url;
+    }
+})();
 
 const MODELS = {
 openai: [
