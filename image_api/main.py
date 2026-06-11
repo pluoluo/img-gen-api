@@ -29,7 +29,13 @@ app.include_router(api_router, prefix="/api/v1")
 def root():
     html_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+    # Inject prompt_portal_url from config so frontend doesn't need a hardcoded port
+    html = html.replace(
+        '<script>',
+        f'<script>\nwindow.__PROMPT_PORTAL_URL__ = "{settings.prompt_portal_url}";'
+    )
+    return html
 
 
 @app.get("/gallery", response_class=HTMLResponse)

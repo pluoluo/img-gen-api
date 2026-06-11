@@ -65,16 +65,10 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         return result
     else:
         # Multipart form via httpx
-
-        # Build httpx files dict: group by field name, support multiple files per field
-        httpx_files: dict = {}
-        for field_name, (filename, file_bytes, content_type) in files:
-            ft = (filename, file_bytes, content_type)
-            if field_name in httpx_files:
-                existing = httpx_files[field_name]
-                httpx_files[field_name] = (existing if isinstance(existing, list) else [existing]) + [ft]
-            else:
-                httpx_files[field_name] = ft
+        # Pass files as a list of (field_name, file_tuple) pairs so httpx 0.23.3
+        # creates a FileField per tuple. Grouping into a dict with list values
+        # would break because httpx 0.23.3 treats the list as a file object.
+        file_items = [(fn, ft) for fn, ft in files]
 
         # Text form fields
         form_data = {}
@@ -96,7 +90,7 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
                 async with httpx.AsyncClient(transport=transport, trust_env=False,
                                               timeout=timeout_cfg) as client:
                     async with client.stream("POST", url, headers=headers,
-                                              files=httpx_files, data=form_data) as resp:
+                                              files=file_items, data=form_data) as resp:
                         log_info(f"httpx multipart 响应: {resp.status_code}")
                         total_bytes = 0
                         with open(tmp_path, "wb") as f:

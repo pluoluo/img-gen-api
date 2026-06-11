@@ -443,8 +443,9 @@ margin-top: 6px;
 </div>
 
 <script>
-// Prompt 链接：使用当前访问地址，端口改为 8769
-document.getElementById('promptLink').href = window.location.protocol + '//' + window.location.hostname + ':8769';
+// Prompt 链接：使用服务端注入的 PROMPT_PORTAL_URL 配置
+document.getElementById('promptLink').href = window.__PROMPT_PORTAL_URL__ ||
+    (window.location.protocol + '//' + window.location.hostname + ':8769');
 
 const MODELS = {
 openai: [
