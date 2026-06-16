@@ -95,7 +95,7 @@ def get_thumbnail_path(filename: str) -> Optional[str]:
     return thumb_name if thumb_path.exists() else None
 
 
-def save_image(
+async def save_image(
     model: str,
     sub_model: str,
     prompt: str,
@@ -120,11 +120,13 @@ def save_image(
         if b64:
             fname = _save_image_file(b64)
         elif url:
-            # Download from URL and save
+            # Download from URL and save (async to not block event loop)
             import httpx
             try:
-                resp = httpx.get(url, timeout=30)
-                resp.raise_for_status()
+                async with httpx.AsyncClient(trust_env=False,
+                                             timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=10.0)) as dl:
+                    resp = await dl.get(url)
+                    resp.raise_for_status()
                 fname = f"{uuid.uuid4().hex}.png"
                 fpath = GALLERY_DIR / fname
                 with open(fpath, "wb") as f:

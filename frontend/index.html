@@ -335,7 +335,7 @@ margin-top: 6px;
 <div class="container">
 <header>
 <h1>AI Image Generator</h1>
-<p class="subtitle">OpenAI / Gemini / MiniMax 图片生成服务</p>
+<p class="subtitle">OpenAI / PackyAPI / Gemini / MiniMax 图片生成服务</p>
 <a href="/gallery" style="position:absolute;top:20px;right:20px;font-size:0.8rem;color:#667eea;text-decoration:none;">🖼️ 图库</a>
 <a href="/logs" style="position:absolute;top:20px;right:80px;font-size:0.8rem;color:#667eea;text-decoration:none;">📋 日志</a>
 <a id="promptLink" style="position:absolute;top:20px;right:140px;font-size:0.8rem;color:#667eea;text-decoration:none;">💡 Prompt</a>
@@ -348,6 +348,7 @@ margin-top: 6px;
 <label>Provider</label>
 <select id="provider">
 <option value="openai" selected>OpenAI-HK</option>
+<option value="packy">PackyAPI</option>
 <option value="gemini">Gemini</option>
 <option value="minimax">MiniMax</option>
 </select>
@@ -464,6 +465,9 @@ openai: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
 { value: 'gpt-image-2-vip', label: 'GPT Image 2 VIP (高清)' },
 ],
+packy: [
+{ value: 'gpt-image-2', label: 'GPT Image 2' },
+],
 gemini: [
 { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
 { value: 'gemini-3.1-flash-image-preview-2k', label: 'Gemini 闪存图 (2K)' },
@@ -483,6 +487,15 @@ const HINTS = {
 'image-01': 'MiniMax 图像模型',
 };
 
+// Provider-specific hint overrides
+const PROVIDER_HINTS = {
+'packy|gpt-image-2': 'PackyAPI 提供商，价格较高，仅作备选',
+};
+
+function getModelHint(prov, model) {
+  return PROVIDER_HINTS[prov + '|' + model] || HINTS[model] || '';
+}
+
 const SIZE_OVERRIDES = {
 // Gemini 1K/2K/4K: all support ratio-based sizes (API interprets ratio per tier)
 'gemini-3.1-flash-image-preview': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
@@ -498,7 +511,7 @@ const QUALITY_MODELS = ['gpt-image-2', 'gpt-image-2-vip'];
 const VIP_PIXEL_THRESHOLD = 1659 * 948; // 1,572,852
 const SIZES = [
   { name: '自动', ratio: null, d: { '1K': null } },
-  { name: '16:9',  ratio: [16, 9],  d: { '1K': [1659, 948],  '2K': [2048, 1152], '4K': [3808, 2160] } },
+  { name: '16:9',  ratio: [16, 9],  d: { '1K': [1920, 1080],  '2K': [2560, 1440], '4K': [3840, 2160] } },
   { name: '1:1',   ratio: [1, 1],   d: { '1K': [1024, 1024], '2K': [2048, 2048], '4K': [2880, 2880] } },
   { name: '4:3',   ratio: [4, 3],   d: { '1K': [1024, 768],  '2K': [2048, 1536], '4K': [3072, 2304] } },
   { name: '3:2',   ratio: [3, 2],   d: { '1K': [1008, 672],  '2K': [2064, 1376], '4K': [3504, 2336] } },
@@ -547,7 +560,7 @@ const model = subModelSel.value;
 const prov = providerSel.value;
 
 // hint
-modelHint.textContent = HINTS[model] || '';
+modelHint.textContent = getModelHint(prov, model);
 
 // quality field: show for gpt-image-2, disable for others
 const qualitySel = document.getElementById('quality');
@@ -612,7 +625,7 @@ function updateModelForSize() {
       subModelSel.value = 'gpt-image-2';
     }
   }
-  modelHint.textContent = HINTS[subModelSel.value] || '';
+  modelHint.textContent = getModelHint(prov, subModelSel.value);
 }
 
 // 重建 gpt-image-2 分组尺寸下拉框（optgroup by tier）
@@ -626,12 +639,19 @@ function rebuildGptSizes() {
   autoOpt.textContent = '自动（保持参考图比例）';
   sizeSel.appendChild(autoOpt);
 
-  // 按 tier 分组
-  const tiers = [
-    { key: '1K', label: '1K — 标准' },
-    { key: '2K', label: '2K — VIP 高清' },
-    { key: '4K', label: '4K — VIP 超高清' },
-  ];
+  // 按 tier 分组（packy 不需要 VIP 区分，gpt-image-2 直接支持全部尺寸）
+  const prov = providerSel.value;
+  const tiers = prov === 'openai'
+    ? [
+        { key: '1K', label: '1K — 标准' },
+        { key: '2K', label: '2K — VIP 高清' },
+        { key: '4K', label: '4K — VIP 超高清' },
+      ]
+    : [
+        { key: '1K', label: '1K — 标准' },
+        { key: '2K', label: '2K — 贵！慎重！' },
+        { key: '4K', label: '4K — 贵！慎重！' },
+      ];
 
   tiers.forEach(tier => {
     const group = document.createElement('optgroup');
@@ -702,7 +722,7 @@ document.getElementById('sizeCustom').addEventListener('blur', () => {
       } else {
         subModelSel.value = 'gpt-image-2';
       }
-      modelHint.textContent = HINTS[subModelSel.value] || '';
+      modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
     }
   }
 });

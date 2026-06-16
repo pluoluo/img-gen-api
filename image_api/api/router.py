@@ -181,7 +181,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
 
         # Save to gallery
         if result:
-            save_image(
+            await save_image(
                 model=request.model,
                 sub_model=request.sub_model,
                 prompt=request.prompt,

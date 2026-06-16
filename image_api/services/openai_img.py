@@ -3,6 +3,7 @@ import httpx
 import base64
 import io
 import os
+import socket
 import tempfile
 from typing import Optional, List
 from PIL import Image
@@ -13,9 +14,26 @@ from image_api.services.log_helper import log_info, log_warn, log_error
 
 # ── HTTP POST helpers (httpx) ─────────────────────────────────────────────
 
+# TCP keepalive config: send keepalive after 60s idle, probe every 15s,
+# drop after 3 failed probes. This keeps long-lived connections alive through
+# NAT/firewall idle timeouts while waiting for slow API responses (e.g. 4K images).
+_KEEPALIVE_OPTS = [
+    (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+    (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),
+    (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15),
+    (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
+]
+
+
 def _is_packy(base_url: str) -> bool:
     """Check if base_url belongs to PackyAPI."""
     return "packyapi.com" in (base_url or "")
+
+
+def _make_transport():
+    """Create an AsyncHTTPTransport with TCP keepalive enabled."""
+    return httpx.AsyncHTTPTransport(retries=1, http2=False,
+                                     socket_options=_KEEPALIVE_OPTS)
 
 
 async def _httpx_post(url: str, headers: dict, files: list = None,
@@ -33,23 +51,10 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         # can cause connection confusion with some reverse proxies).
         log_info(f"httpx POST {url} timeout={timeout}s body={_json.dumps(data, ensure_ascii=False)[:200]}")
 
-        last_error = None
-        for attempt in range(1, 4):  # up to 3 attempts
-            transport = httpx.AsyncHTTPTransport(retries=1, http2=False)
-            async with httpx.AsyncClient(transport=transport, trust_env=False,
-                                          timeout=timeout_cfg) as client:
-                try:
-                    resp = await client.post(url, headers=headers, json=data)
-                    break  # success — exit retry loop
-                except (httpx.ReadError, httpx.RemoteProtocolError,
-                        httpx.ConnectError, httpx.ConnectTimeout) as e:
-                    last_error = e
-                    if attempt < 3:
-                        wait = 2 ** attempt  # 2s, 4s, 8s
-                        log_warn(f"httpx 网络错误 (第{attempt}次): {e}, {wait}s后重试...")
-                        await asyncio.sleep(wait)
-                    else:
-                        raise
+        transport = _make_transport()
+        async with httpx.AsyncClient(transport=transport, trust_env=False,
+                                      timeout=timeout_cfg) as client:
+            resp = await client.post(url, headers=headers, json=data)
         resp_bytes = resp.content
         log_info(f"httpx JSON 响应: {resp.status_code} {len(resp_bytes)} 字节")
         if resp.status_code != 200:
@@ -79,42 +84,27 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp_path = tmp.name
         tmp.close()
-
-        last_error = None
-        for attempt in range(1, 4):  # up to 3 attempts
-            tmp = tempfile.NamedTemporaryFile(delete=False)
-            tmp_path = tmp.name
-            tmp.close()
-            try:
-                transport = httpx.AsyncHTTPTransport(retries=1, http2=False)
-                async with httpx.AsyncClient(transport=transport, trust_env=False,
-                                              timeout=timeout_cfg) as client:
-                    async with client.stream("POST", url, headers=headers,
-                                              files=file_items, data=form_data) as resp:
-                        log_info(f"httpx multipart 响应: {resp.status_code}")
-                        total_bytes = 0
-                        with open(tmp_path, "wb") as f:
-                            async for chunk in resp.aiter_bytes(65536):
-                                f.write(chunk)
-                                total_bytes += len(chunk)
-                        log_info(f"httpx multipart 响应体: {total_bytes} 字节")
-                with open(tmp_path, "r", encoding="utf-8") as f:
-                    result = _json.load(f)
-                result_str = _json.dumps(result, ensure_ascii=False)
-                log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
-                return result
-            except (httpx.ReadError, httpx.RemoteProtocolError,
-                    httpx.ConnectError, httpx.ConnectTimeout) as e:
-                last_error = e
-                if attempt < 3:
-                    wait = 2 ** attempt
-                    log_warn(f"httpx multipart 网络错误 (第{attempt}次): {e}, {wait}s后重试...")
-                    await asyncio.sleep(wait)
-                else:
-                    raise
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+        try:
+            transport = _make_transport()
+            async with httpx.AsyncClient(transport=transport, trust_env=False,
+                                          timeout=timeout_cfg) as client:
+                async with client.stream("POST", url, headers=headers,
+                                          files=file_items, data=form_data) as resp:
+                    log_info(f"httpx multipart 响应: {resp.status_code}")
+                    total_bytes = 0
+                    with open(tmp_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(65536):
+                            f.write(chunk)
+                            total_bytes += len(chunk)
+                    log_info(f"httpx multipart 响应体: {total_bytes} 字节")
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                result = _json.load(f)
+            result_str = _json.dumps(result, ensure_ascii=False)
+            log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
+            return result
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
 
 class APIResponseError(Exception):
@@ -316,8 +306,6 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
 
     except Exception as e:
         log_error(f"preprocess_reference_image failed: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
 
