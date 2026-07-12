@@ -30,14 +30,91 @@ def _is_packy(base_url: str) -> bool:
     return "packyapi.com" in (base_url or "")
 
 
-def _make_transport():
-    """Create an AsyncHTTPTransport with TCP keepalive enabled."""
+def _make_transport(proxy: str = None):
+    """Create an AsyncHTTPTransport with TCP keepalive and optional proxy."""
+    extra = {}
+    if proxy:
+        extra["proxy"] = proxy
     return httpx.AsyncHTTPTransport(retries=1, http2=False,
-                                     socket_options=_KEEPALIVE_OPTS)
+                                     socket_options=_KEEPALIVE_OPTS, **extra)
+
+
+_PROXY_DOMAINS = [
+    "pro.filesystem.site",
+    "external-resources.packyapi.com",
+]
+
+
+def _needs_proxy(url: str) -> Optional[str]:
+    """Return proxy URL if the download target requires one, else None."""
+    for domain in _PROXY_DOMAINS:
+        if domain in url:
+            return settings.packy_proxy
+    return None
+
+
+async def _download_image(url: str) -> bytes:
+    """
+    Download image bytes with fallback strategy:
+    1. httpx (with proxy if needed, short timeout)
+    2. wget via subprocess (with proxy env if needed)
+    Raises on total failure.
+    """
+    proxy = _needs_proxy(url)
+
+    # Attempt 1: httpx
+    try:
+        timeout_cfg = httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=10.0)
+        log_info(f"下载图片(httpx, proxy={'yes' if proxy else 'no'}): {url}")
+        async with httpx.AsyncClient(trust_env=False, proxy=proxy,
+                                      timeout=timeout_cfg) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            log_info(f"下载完成(httpx): {len(resp.content)} 字节", ctx={"url": url})
+            return resp.content
+    except Exception as e:
+        log_warn(f"httpx下载失败({type(e).__name__}), 尝试wget: {url}")
+
+    # Attempt 2: wget (honours https_proxy env or explicit -e)
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        env = os.environ.copy()
+        if proxy:
+            env["https_proxy"] = proxy
+            env["http_proxy"] = proxy
+        proc = await asyncio.create_subprocess_exec(
+            "wget", "-q", "--no-check-certificate", "-O", tmp_path, url,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=120)
+        if proc.returncode != 0:
+            raise RuntimeError(f"wget exit {proc.returncode}")
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+        if not data:
+            raise RuntimeError("wget downloaded 0 bytes")
+        log_info(f"下载完成(wget): {len(data)} 字节", ctx={"url": url})
+        return data
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        raise RuntimeError(f"wget timeout downloading {url}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 async def _httpx_post(url: str, headers: dict, files: list = None,
-                        data: dict = None, timeout: int = 900) -> dict:
+                        data: dict = None, timeout: int = 900, proxy: str = None) -> dict:
     """
     POST via httpx (HTTP/1.1, IPv4/IPv6 dual-stack).
     files=None → JSON body; files!=None → multipart form.
@@ -51,7 +128,7 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         # can cause connection confusion with some reverse proxies).
         log_info(f"httpx POST {url} timeout={timeout}s body={_json.dumps(data, ensure_ascii=False)[:200]}")
 
-        transport = _make_transport()
+        transport = _make_transport(proxy=proxy)
         async with httpx.AsyncClient(transport=transport, trust_env=False,
                                       timeout=timeout_cfg) as client:
             resp = await client.post(url, headers=headers, json=data)
@@ -85,7 +162,7 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         tmp_path = tmp.name
         tmp.close()
         try:
-            transport = _make_transport()
+            transport = _make_transport(proxy=proxy)
             async with httpx.AsyncClient(transport=transport, trust_env=False,
                                           timeout=timeout_cfg) as client:
                 async with client.stream("POST", url, headers=headers,
@@ -373,6 +450,12 @@ async def generate_openai_image(
         effective_base_url = base_url or settings.openai_base_url
         effective_api_key = api_key or settings.openai_api_key
 
+        # Determine proxy: use per-call base_url to detect PackyAPI
+        is_packy = _is_packy(effective_base_url)
+        proxy = settings.packy_proxy if is_packy else None
+        if proxy:
+            log_info(f"PackyAPI 使用代理: {proxy}")
+
         headers = {
             "Authorization": f"Bearer {effective_api_key}",
         }
@@ -424,6 +507,7 @@ async def generate_openai_image(
                 headers=headers,
                 data=body,
                 timeout=timeout,
+                proxy=proxy,
             )
 
         else:
@@ -434,16 +518,13 @@ async def generate_openai_image(
 
             # Download URL references and convert to base64
             for u in all_urls:
-                async with httpx.AsyncClient(trust_env=False,
-                                              timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=10.0)) as client:
-                    img_resp = await client.get(u)
-                    img_resp.raise_for_status()
-                    img = Image.open(io.BytesIO(img_resp.content))
-                    if img.mode != "RGB":
-                        img = img.convert("RGB")
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    all_base64s.append(base64.b64encode(buf.getvalue()).decode())
+                img_bytes = await _download_image(u)
+                img = Image.open(io.BytesIO(img_bytes))
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                all_base64s.append(base64.b64encode(buf.getvalue()).decode())
 
             # First image: full preprocessing (determines output size)
             first_b64 = all_base64s[0]
@@ -451,7 +532,6 @@ async def generate_openai_image(
             log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，API尺寸={actual_size}，用户尺寸={adjusted_size}")
 
             # Determine multipart field name per provider
-            is_packy = _is_packy(effective_base_url)
             field_name = "image" if is_packy else "image[]"
 
             # Build files list: first image + additional refs (validate-only, no resize)
@@ -487,12 +567,19 @@ async def generate_openai_image(
                 files=files,
                 data=data,
                 timeout=timeout,
+                proxy=proxy,
             )
             log_info(f"编辑 API 返回：{str(data)[:500]}")
 
         # Parse response
         images = []
         items = data.get("data")
+
+        if items is None:
+            api_error = data.get("error", {})
+            msg = api_error.get("message", "") if isinstance(api_error, dict) else str(api_error)
+            log_error(f"API 返回错误: {msg}", ctx={"response": str(data)[:1000]})
+            raise ValueError(msg or f"API 返回格式异常，缺少 'data' 字段: {str(data)[:500]}")
 
         for item in items:
             # OpenAI API returns 'url', some providers return 'b64_json'
@@ -507,51 +594,15 @@ async def generate_openai_image(
                     "base64": b64_data,
                 })
             elif url_data:
-                # Provider returned URL, download and convert to base64 for frontend
                 try:
-                    # external-resources.packyapi.com: curl/httpx systematically fail
-                    # with SSL_ERROR_SYSCALL on this network, wget works reliably.
-                    if "external-resources.packyapi.com" in url_data:
-                        log_info(f"开始下载图片(wget)：{url_data}")
-                        tmp = tempfile.NamedTemporaryFile(delete=False)
-                        tmp_path = tmp.name
-                        tmp.close()
-                        proc = await asyncio.create_subprocess_exec(
-                            "wget", "-q", "-O", tmp_path, url_data,
-                            stdout=asyncio.subprocess.DEVNULL,
-                            stderr=asyncio.subprocess.DEVNULL,
-                        )
-                        try:
-                            await asyncio.wait_for(proc.wait(), timeout=180)
-                        except asyncio.TimeoutError:
-                            proc.kill()
-                            await proc.wait()
-                            os.unlink(tmp_path)
-                            raise TimeoutError("wget 下载超时")
-                        if proc.returncode != 0:
-                            os.unlink(tmp_path)
-                            raise RuntimeError(f"wget 退出码 {proc.returncode}")
-                        with open(tmp_path, "rb") as f:
-                            img_bytes = f.read()
-                        os.unlink(tmp_path)
-                        b64_from_url = base64.b64encode(img_bytes).decode()
-                        log_info(f"图片下载完成(wget)：{len(img_bytes)} 字节", ctx={"url": url_data})
-                    else:
-                        log_info(f"开始下载图片(httpx)：{url_data}")
-                        async with httpx.AsyncClient(trust_env=False,
-                                                        timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=10.0)) as dl_client:
-                            img_resp = await dl_client.get(url_data)
-                            img_resp.raise_for_status()
-                            img_bytes = img_resp.content
-                            b64_from_url = base64.b64encode(img_bytes).decode()
-                            log_info(f"图片下载完成(httpx)：{len(img_bytes)} 字节", ctx={"url": url_data})
+                    img_bytes = await _download_image(url_data)
+                    b64_from_url = base64.b64encode(img_bytes).decode()
                     images.append({
                         "url": url_data,
                         "base64": b64_from_url,
                     })
                 except Exception as e:
-                    log_warn(f"下载图片失败：{e}", ctx={"url": url_data})
-                    # Still return the URL even if download fails
+                    log_warn(f"下载图片失败({type(e).__name__}): {e}", ctx={"url": url_data})
                     images.append({
                         "url": url_data,
                         "base64": None,

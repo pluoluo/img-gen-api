@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # PackyAPI (gpt-image-2 via packyapi.com)
     packy_api_key: Optional[str] = None
     packy_base_url: str = "https://www.packyapi.com/v1"
+    packy_proxy: Optional[str] = None  # e.g. http://127.0.0.1:7890
 
     # Prompt Portal (for AI prompt optimization)
     prompt_portal_url: str = "http://127.0.0.1:8768"

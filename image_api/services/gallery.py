@@ -120,17 +120,13 @@ async def save_image(
         if b64:
             fname = _save_image_file(b64)
         elif url:
-            # Download from URL and save (async to not block event loop)
-            import httpx
+            from image_api.services.openai_img import _download_image
             try:
-                async with httpx.AsyncClient(trust_env=False,
-                                             timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=10.0)) as dl:
-                    resp = await dl.get(url)
-                    resp.raise_for_status()
+                img_data = await _download_image(url)
                 fname = f"{uuid.uuid4().hex}.png"
                 fpath = GALLERY_DIR / fname
                 with open(fpath, "wb") as f:
-                    f.write(resp.content)
+                    f.write(img_data)
             except Exception:
                 fname = ""
         else:
