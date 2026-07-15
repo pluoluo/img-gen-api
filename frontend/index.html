@@ -295,6 +295,12 @@ color: #555;
 margin-top: 6px;
 }
 
+.size-warn {
+font-size: 0.75rem;
+color: #d9a441;
+margin-top: 6px;
+}
+
 /* Fullscreen image modal */
 .img-modal {
   display: none;
@@ -391,6 +397,7 @@ margin-top: 6px;
 </select>
 </div>
 <input type="text" id="sizeCustom" placeholder="例如 1920*1080" style="display:none;">
+<p class="size-warn" id="sizeCustomHint" style="display:none;"></p>
 </div>
 <div class="field" id="qualityField">
 <label>质量</label>
@@ -705,6 +712,7 @@ sizeSel.addEventListener('change', () => {
   const isCustom = sizeSel.value === '__custom__';
   document.getElementById('sizeSelectWrap').style.display = isCustom ? 'none' : '';
   document.getElementById('sizeCustom').style.display = isCustom ? '' : 'none';
+  if (!isCustom) document.getElementById('sizeCustomHint').style.display = 'none';
   if (isCustom) document.getElementById('sizeCustom').focus();
   if (!isCustom && sizeSel.value !== 'auto') updateModelForSize();
 });
@@ -724,6 +732,32 @@ document.getElementById('sizeCustom').addEventListener('blur', () => {
       }
       modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
     }
+  }
+});
+
+// 自定义尺寸长宽比校验提示（不阻止提交，后端会自动合规调整）
+const MAX_CUSTOM_ASPECT_RATIO = 3; // 长边:短边，与后端 _SIZE_MAX_ASPECT_RATIO 保持一致
+document.getElementById('sizeCustom').addEventListener('input', () => {
+  const hint = document.getElementById('sizeCustomHint');
+  const raw = document.getElementById('sizeCustom').value.trim().replace(/\*/g, 'x');
+  const parts = raw.split('x');
+  if (parts.length !== 2) {
+    hint.style.display = 'none';
+    return;
+  }
+  const pw = parseInt(parts[0]), ph = parseInt(parts[1]);
+  if (isNaN(pw) || isNaN(ph) || pw <= 0 || ph <= 0) {
+    hint.style.display = 'none';
+    return;
+  }
+  const ratio = Math.max(pw, ph) / Math.min(pw, ph);
+  if (ratio > MAX_CUSTOM_ASPECT_RATIO) {
+    const longEdge = pw >= ph ? '宽' : '高';
+    const shortEdge = pw >= ph ? '高' : '宽';
+    hint.textContent = `提示：长宽比约 ${ratio.toFixed(1)}:1，超过系统上限 ${MAX_CUSTOM_ASPECT_RATIO}:1，生成时会自动缩小${longEdge}边以匹配${shortEdge}边`;
+    hint.style.display = '';
+  } else {
+    hint.style.display = 'none';
   }
 });
 

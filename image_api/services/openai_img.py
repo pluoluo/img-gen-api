@@ -204,14 +204,32 @@ _SIZE_MIN_LONG = 512
 _SIZE_MAX_LONG = 3840
 _SIZE_MIN_PIXELS = 655360
 _SIZE_MAX_PIXELS = 8294400
+_SIZE_MAX_ASPECT_RATIO = 3.0  # long edge : short edge, e.g. 3840x1280 is right at the limit
+
+
+def _clamp_aspect_ratio(w: int, h: int) -> tuple[int, int]:
+    """Shrink the longer edge so long:short never exceeds _SIZE_MAX_ASPECT_RATIO."""
+    if w > h and w > h * _SIZE_MAX_ASPECT_RATIO:
+        new_w = round(h * _SIZE_MAX_ASPECT_RATIO)
+        log_info(f"[size] aspect ratio cap applied: {w}x{h} → {new_w}x{h} "
+                 f"(max {_SIZE_MAX_ASPECT_RATIO}:1)")
+        return new_w, h
+    if h > w and h > w * _SIZE_MAX_ASPECT_RATIO:
+        new_h = round(w * _SIZE_MAX_ASPECT_RATIO)
+        log_info(f"[size] aspect ratio cap applied: {w}x{h} → {w}x{new_h} "
+                 f"(max {_SIZE_MAX_ASPECT_RATIO}:1)")
+        return w, new_h
+    return w, h
 
 
 def _constrain_pixel_dims(raw_w: int, raw_h: int) -> tuple[int, int]:
-    """Apply API pixel-count and edge-limit constraints to raw dimensions."""
+    """Apply API pixel-count, edge-limit, and aspect-ratio constraints to raw dimensions."""
     MIN_LONG = _SIZE_MIN_LONG
     MAX_LONG = _SIZE_MAX_LONG
     MIN_PIXELS = _SIZE_MIN_PIXELS
     MAX_PIXELS = _SIZE_MAX_PIXELS
+
+    raw_w, raw_h = _clamp_aspect_ratio(raw_w, raw_h)
 
     pixel_count = raw_w * raw_h
     if pixel_count > MAX_PIXELS:
@@ -293,6 +311,7 @@ def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tupl
       - Min long edge ≥ 512px (enforced after all other steps)
       - Both edges must be multiples of 16
       - Total pixels: 655,360 ~ 8,294,400
+      - Aspect ratio (long:short) ≤ 3:1
     """
     orig_ratio = orig_w / orig_h
 
@@ -346,6 +365,7 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
       - Max long edge ≤ 3840px
       - Both edges must be multiples of 16
       - Total pixels: 655,360 ~ 8,294,400
+      - Aspect ratio (long:short) ≤ 3:1
 
     Scaling logic:
       - "auto": keep original dimensions, apply 16x alignment + pixel constraints
