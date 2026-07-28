@@ -27,7 +27,9 @@ _KEEPALIVE_OPTS = [
 
 def _is_packy(base_url: str) -> bool:
     """Check if base_url belongs to PackyAPI."""
-    return "packyapi.com" in (base_url or "")
+    if not base_url:
+        return False
+    return "packyapi.com" in base_url or "packyapi.ai" in base_url
 
 
 def _make_transport(proxy: str = None):
@@ -531,12 +533,7 @@ async def generate_openai_image(
             )
 
         else:
-            # Image-to-image via /v1/images/edits (multipart)
-            # Open-hk's generations endpoint 'image' param is broken (code 1001)
-            url = f"{effective_base_url}/images/edits"
-            log_info(f"Image-to-image: POST {url} (refs: {len(all_base64s)} base64 + {len(all_urls)} urls)")
-
-            # Download URL references and convert to base64
+            # Download URL references and convert to base64 (both providers need this)
             for u in all_urls:
                 img_bytes = await _download_image(u)
                 img = Image.open(io.BytesIO(img_bytes))
@@ -551,7 +548,11 @@ async def generate_openai_image(
             processed_bytes, actual_size, adjusted_size = preprocess_reference_image(first_b64, size)
             log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，API尺寸={actual_size}，用户尺寸={adjusted_size}")
 
-            # Determine multipart field name per provider
+            # Image-to-image via /v1/images/edits (multipart)
+            # PackyAPI uses field name "image", open-hk uses "image[]"
+            url = f"{effective_base_url}/images/edits"
+            log_info(f"Image-to-image: POST {url} (refs: {len(all_base64s)} base64 + {len(all_urls)} urls)")
+
             field_name = "image" if is_packy else "image[]"
 
             # Build files list: first image + additional refs (validate-only, no resize)
