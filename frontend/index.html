@@ -559,8 +559,8 @@ minimax: [
 
 const HINTS = {
 'gpt-image-2': '旧版基础模型：仅支持 1K 档尺寸；需要 2K/4K 请选 GPT Image 2.5 系列',
-'gpt-image-2.5-flare': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；后台按尺寸自动匹配 -2k/-4k',
-'gpt-image-2.5-sunburst': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；后台按尺寸自动匹配 -2k/-4k',
+'gpt-image-2.5-flare': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；服务商按所选尺寸自动分档出图',
+'gpt-image-2.5-sunburst': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；服务商按所选尺寸自动分档出图',
 'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
 'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
 'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
@@ -649,7 +649,7 @@ function updateSizePriceTip() {
   const model = subModelSel.value;
   if (prov === 'openai' && MODEL25.includes(model)) {
     bubble.classList.remove('hidden');
-    textEl.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨ 系统会自动匹配对应高清模型';
+    textEl.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨ 服务商会按所选尺寸自动分档出图';
     textEl.style.color = '#6fcf97';
   } else if (prov === 'openai' && model === 'gpt-image-2') {
     bubble.classList.remove('hidden');
@@ -720,7 +720,7 @@ sizeSel.appendChild(opt);
 updateSizePriceTip();
 }
 
-// 尺寸变化不再自动切换模型（VIP 已下线；2.5 系列由后台按最终尺寸路由 -2k/-4k）。
+// 尺寸变化不再自动切换模型（VIP 已下线；2.5 系列由服务商按尺寸自动分档）。
 // 保留此函数仅为兼容原有调用点，刷新提示文案。
 function updateModelForSize() {
   modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
@@ -825,7 +825,7 @@ sizeSel.addEventListener('change', () => {
   if (!isCustom && sizeSel.value !== 'auto') updateModelForSize();
 });
 
-// 自定义尺寸不再自动切换模型（VIP 已下线；2.5 系列由后台按最终尺寸路由）
+// 自定义尺寸不再自动切换模型（VIP 已下线；2.5 系列由服务商按尺寸自动分档）
 // 自定义尺寸长宽比校验提示（不阻止提交，后端会自动合规调整）
 const MAX_CUSTOM_ASPECT_RATIO = 3; // 长边:短边，与后端 _SIZE_MAX_ASPECT_RATIO 保持一致
 document.getElementById('sizeCustom').addEventListener('input', () => {
@@ -1122,8 +1122,7 @@ form.addEventListener('submit', async e => {
     // 支持 1920*1080 格式（* 号）
     sizeVal = sizeVal.replace(/\*/g, 'x');
 
-    // 模型由用户在下拉框选择原样提交：
-    // 2.5 flare/sunburst 由后台按最终尺寸路由 -2k/-4k 变体（仅 openai-hk）
+    // 模型由用户在下拉框选择原样提交：2.5 flare/sunburst 由服务商按尺寸自动分档
     const finalModel = subModelSel.value;
 
     const body = {
