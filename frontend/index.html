@@ -745,11 +745,11 @@ function rebuildGptSizes() {
       { key: '1K', label: '1K — 标准（仅此档）' },
     ];
   } else {
-    // packy：按量计费，大尺寸费用显著更高
+    // packy：按量计费，大尺寸费用显著更高 → 引导去 OpenAI-HK
     tiers = [
       { key: '1K', label: '1K — 标准' },
-      { key: '2K', label: '2K — 贵！慎重！' },
-      { key: '4K', label: '4K — 贵！慎重！' },
+      { key: '2K', label: '2K — 使用 OpenAI-HK 更省' },
+      { key: '4K', label: '4K — 使用 OpenAI-HK 更省' },
     ];
   }
 
