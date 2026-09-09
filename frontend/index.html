@@ -301,12 +301,64 @@ color: #d9a441;
 margin-top: 6px;
 }
 
-.size-tip {
-font-size: 0.72rem;
-color: #6fcf97;
-margin-top: 6px;
-line-height: 1.5;
+/* 悬浮费用提示气泡（右下角） */
+.price-bubble {
+position: fixed;
+right: 22px;
+bottom: 22px;
+z-index: 300;
+display: flex;
+flex-direction: column;
+align-items: flex-end;
 }
+.price-bubble.hidden { display: none; }
+.price-bubble-btn {
+width: 52px; height: 52px;
+border-radius: 50%;
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+border: none;
+color: #fff;
+font-size: 1.3rem;
+cursor: pointer;
+box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+transition: transform 0.15s, opacity 0.2s;
+}
+.price-bubble-btn:hover { transform: scale(1.06); opacity: 0.92; }
+.price-bubble-panel {
+position: relative;
+width: 280px;
+background: #1a1a22;
+border: 1px solid #2a2a35;
+border-radius: 16px;
+padding: 14px 18px 12px 14px;
+margin-bottom: 12px;
+font-size: 0.8rem;
+line-height: 1.7;
+box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+display: none;
+}
+.price-bubble-panel.open { display: block; }
+.price-bubble-panel .bubble-arrow {
+position: absolute;
+bottom: -7px;
+right: 17px;
+width: 12px; height: 12px;
+background: #1a1a22;
+border-right: 1px solid #2a2a35;
+border-bottom: 1px solid #2a2a35;
+transform: rotate(45deg);
+}
+.price-bubble-close {
+position: absolute;
+top: 8px; right: 10px;
+background: none;
+border: none;
+color: #666;
+font-size: 0.95rem;
+cursor: pointer;
+line-height: 1;
+}
+.price-bubble-close:hover { color: #ccc; }
 
 /* Fullscreen image modal */
 .img-modal {
@@ -405,7 +457,6 @@ line-height: 1.5;
 </div>
 <input type="text" id="sizeCustom" placeholder="例如 1920*1080" style="display:none;">
 <p class="size-warn" id="sizeCustomHint" style="display:none;"></p>
-<p class="size-tip" id="sizePriceTip" style="display:none;"></p>
 </div>
 <div class="field" id="qualityField">
 <label>质量</label>
@@ -456,6 +507,16 @@ line-height: 1.5;
 <div class="img-modal" id="imgModal">
   <button class="img-modal-close" id="imgModalClose">×</button>
   <img id="imgModalSrc" src="" alt="">
+</div>
+
+<!-- 费用提示悬浮气泡（右下角） -->
+<div class="price-bubble hidden" id="priceBubble">
+  <div class="price-bubble-panel" id="priceBubblePanel">
+    <button type="button" class="price-bubble-close" id="priceBubbleClose" title="关闭">×</button>
+    <span id="priceBubbleText"></span>
+    <div class="bubble-arrow"></div>
+  </div>
+  <button type="button" class="price-bubble-btn" id="priceBubbleBtn" title="费用提示">💡</button>
 </div>
 
 <script>
@@ -579,23 +640,32 @@ subModelSel.value = current;
 applyModelConstraints();
 }
 
-// openai-hk：2.5 按次计费同价 → 鼓励大尺寸；旧版 gpt-image-2 仅 1K 档 → 提示改用 2.5
+// openai-hk：2.5 按次计费同价 → 气泡鼓励大尺寸；旧版 gpt-image-2 仅 1K 档 → 气泡提示改用 2.5。
+// 气泡仅在有费用提示时显示（右下角悬浮），点击 💡 展开/收起对话气泡。
 function updateSizePriceTip() {
-  const tip = document.getElementById('sizePriceTip');
+  const bubble = document.getElementById('priceBubble');
+  const textEl = document.getElementById('priceBubbleText');
   const prov = providerSel.value;
   const model = subModelSel.value;
   if (prov === 'openai' && MODEL25.includes(model)) {
-    tip.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨（系统会自动匹配对应高清模型）';
-    tip.style.color = '#6fcf97';
-    tip.style.display = '';
+    bubble.classList.remove('hidden');
+    textEl.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨ 系统会自动匹配对应高清模型';
+    textEl.style.color = '#6fcf97';
   } else if (prov === 'openai' && model === 'gpt-image-2') {
-    tip.textContent = '旧版 GPT Image 2 仅提供 1K 档尺寸；需要 2K/4K 请改用 GPT Image 2.5 系列（按次同价）';
-    tip.style.color = '#d9a441';
-    tip.style.display = '';
+    bubble.classList.remove('hidden');
+    textEl.textContent = '旧版 GPT Image 2 仅提供 1K 档尺寸；需要 2K/4K 请改用 GPT Image 2.5 系列（按次同价）';
+    textEl.style.color = '#d9a441';
   } else {
-    tip.style.display = 'none';
+    bubble.classList.add('hidden');
+    document.getElementById('priceBubblePanel').classList.remove('open');
   }
 }
+document.getElementById('priceBubbleBtn').addEventListener('click', () => {
+  document.getElementById('priceBubblePanel').classList.toggle('open');
+});
+document.getElementById('priceBubbleClose').addEventListener('click', () => {
+  document.getElementById('priceBubblePanel').classList.remove('open');
+});
 
 function applyModelConstraints() {
 const model = subModelSel.value;

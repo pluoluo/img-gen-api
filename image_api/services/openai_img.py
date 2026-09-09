@@ -180,7 +180,7 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
         log_info(f"httpx JSON 响应: {resp.status_code} {len(resp_bytes)} 字节")
         if resp.status_code != 200:
             raw = resp_bytes.decode("utf-8", errors="replace")
-            log_error(f"PackyAPI 非200响应: HTTP {resp.status_code} | {raw[:500]}")
+            log_error(f"API 非200响应: HTTP {resp.status_code} | {raw[:500]}")
             raise APIResponseError(resp.status_code, raw)
         try:
             result = _json.loads(resp_bytes.decode("utf-8"))
@@ -233,7 +233,33 @@ class APIResponseError(Exception):
     def __init__(self, status: int, raw_body: str):
         self.status = status
         self.raw_body = raw_body
-        super().__init__(f"PackyAPI 返回 HTTP {status}")
+        # 尽量提取 API 返回的人类可读原因（如 "This token has no access to model ..."），
+        # 让前端/日志直接看到真正原因，而不是笼统的 HTTP 状态码。
+        detail = ""
+        try:
+            parsed = _json_loads_safe(raw_body)
+            err = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(err, dict):
+                detail = err.get("message") or ""
+            elif isinstance(err, str):
+                detail = err
+        except Exception:
+            detail = ""
+        self.api_message = str(detail)[:300] if detail else ""
+        msg = f"API 返回 HTTP {status}"
+        if self.api_message:
+            msg += f": {self.api_message}"
+        super().__init__(msg)
+
+
+def _json_loads_safe(raw: str):
+    import json as _json
+    if not raw:
+        return None
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return None
 
 
 def _round_to_multiple_of_16(n: int) -> int:
