@@ -733,11 +733,11 @@ function rebuildGptSizes() {
   const isLegacyOpenai = (prov === 'openai' && model === 'gpt-image-2');
   let tiers;
   if (MODEL25.includes(model) && prov === 'openai') {
-    // openai-hk 2.5：按次计费，1K/2K/4K 同价，鼓励大尺寸
+    // openai-hk 2.5：按次计费，1K/2K/4K 大小同价，鼓励大尺寸
     tiers = [
       { key: '1K', label: '1K — 标准' },
-      { key: '2K', label: '2K — 同价' },
-      { key: '4K', label: '4K — 同价，最划算' },
+      { key: '2K', label: '2K — 大小同价' },
+      { key: '4K', label: '4K — 大小同价，最划算' },
     ];
   } else if (isLegacyOpenai) {
     // 旧版 gpt-image-2（openai-hk）：仅 1K 档（原 VIP 的 2K/4K 职责由 2.5 系列接管）
