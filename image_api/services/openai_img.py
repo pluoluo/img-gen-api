@@ -26,10 +26,52 @@ _KEEPALIVE_OPTS = [
 
 
 def _is_packy(base_url: str) -> bool:
-    """Check if base_url belongs to PackyAPI."""
+    """Check if base_url belongs to PackyAPI (official domains or CN relay api.fan)."""
     if not base_url:
         return False
-    return "packyapi.com" in base_url or "packyapi.ai" in base_url
+    return ("packyapi.com" in base_url or "packyapi.ai" in base_url
+            or "api.fan" in base_url)
+
+
+# ── OpenAI-HK gpt-image-2.5 尺寸档位 → 模型变体自动路由 ──────────────────
+# openai-hk 把 2.5 flare/sunburst 各自拆成 3 个模型（按出图尺寸计费档）：
+#   gpt-image-2.5-flare / -flare-2k / -flare-4k（sunburst 同理）
+# 前端预设尺寸按长边聚类：1K 档长边 1008~1920，2K 档 2016~2560，4K 档 2880~3840
+# （16:9/1:1/4:3/3:2/5:4/A4/21:9 各比例的三档长边不相交）。
+# 分档边界取相邻两档中点：≤2000 → 基础名；2001~2720 → -2k；>2720 → -4k。
+# PackyAPI 不拆分（单模型直接支持各尺寸），旧模型 gpt-image-2 / -vip 也原样透传。
+_MODEL25_STYLES = ("gpt-image-2.5-flare", "gpt-image-2.5-sunburst")
+_1K_MAX_LONG_EDGE = 2000   # 1K 档预设长边最大 1920（16:9）
+_2K_MAX_LONG_EDGE = 2720   # 2K 档最大 2560（16:9），4K 档最小 2880（1:1）
+
+
+def _resolve_model_variant(model: str, size: str, is_packy: bool) -> str:
+    """
+    OpenAI-HK 2.5 flare/sunburst 按最终尺寸自动路由到对应变体：
+      长边 ≤ 2000        → 基础名 (gpt-image-2.5-flare)
+      2000 < 长边 ≤ 2720 → -2k 变体
+      长边 > 2720        → -4k 变体
+    PackyAPI（不分档）与旧模型原样返回，不追加后缀。
+    """
+    if is_packy or model not in _MODEL25_STYLES:
+        return model
+    try:
+        parts = (size or "").lower().replace("*", "x").split("x")
+        w, h = int(parts[0]), int(parts[1])
+        long_edge = max(w, h)
+    except (ValueError, IndexError):
+        log_warn(f"[routing] 无法解析尺寸 '{size}'，2.5 模型按基础档发送")
+        return model
+    if long_edge <= _1K_MAX_LONG_EDGE:
+        log_info(f"[routing] {model} 尺寸 {size} → 基础档 {model}")
+        return model
+    if long_edge <= _2K_MAX_LONG_EDGE:
+        resolved = model + "-2k"
+        log_info(f"[routing] {model} 尺寸 {size} → 2K 档 {resolved}")
+        return resolved
+    resolved = model + "-4k"
+    log_info(f"[routing] {model} 尺寸 {size} → 4K 档 {resolved}")
+    return resolved
 
 
 def _make_transport(proxy: str = None):
@@ -500,9 +542,11 @@ async def generate_openai_image(
         if not has_ref_image:
             # Pure text-to-image via /v1/images/generations
             adjusted_size = validate_text_to_image_size(size)
+            # OpenAI-HK 2.5 flare/sunburst: 按最终尺寸自动路由 -2k/-4k 变体
+            resolved_model = _resolve_model_variant(model, adjusted_size, is_packy)
             url = f"{effective_base_url}/images/generations"
             body = {
-                "model": model,
+                "model": resolved_model,
                 "prompt": prompt,
                 "n": n,
                 "size": adjusted_size,
@@ -513,7 +557,8 @@ async def generate_openai_image(
 
 
             log_info(f"调用 API：POST {url}", ctx={
-                "model": model,
+                "model": resolved_model,
+                "requested_model": model,
                 "size": size,
                 "has_ref": False,
             })
@@ -564,8 +609,10 @@ async def generate_openai_image(
                 files.append((field_name, (f"reference_{i}.png", other_bytes, "image/png")))
                 log_info(f"参考图[{i}] 像素验证完成，已加入请求")
 
+            # OpenAI-HK 2.5 flare/sunburst: 按最终尺寸自动路由 -2k/-4k 变体
+            resolved_model = _resolve_model_variant(model, actual_size, is_packy)
             data = {
-                "model": model,
+                "model": resolved_model,
                 "prompt": prompt,
                 "n": n,
                 "size": actual_size,
@@ -574,6 +621,8 @@ async def generate_openai_image(
                 data["quality"] = quality
 
             log_info(f"提交编辑请求：POST {url}", ctx={
+                "model": resolved_model,
+                "requested_model": model,
                 "quality": quality,
                 "size": actual_size,
                 "field": field_name,

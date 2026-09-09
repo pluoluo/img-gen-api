@@ -301,6 +301,13 @@ color: #d9a441;
 margin-top: 6px;
 }
 
+.size-tip {
+font-size: 0.72rem;
+color: #6fcf97;
+margin-top: 6px;
+line-height: 1.5;
+}
+
 /* Fullscreen image modal */
 .img-modal {
   display: none;
@@ -398,6 +405,7 @@ margin-top: 6px;
 </div>
 <input type="text" id="sizeCustom" placeholder="例如 1920*1080" style="display:none;">
 <p class="size-warn" id="sizeCustomHint" style="display:none;"></p>
+<p class="size-tip" id="sizePriceTip" style="display:none;"></p>
 </div>
 <div class="field" id="qualityField">
 <label>质量</label>
@@ -470,10 +478,13 @@ margin-top: 6px;
 const MODELS = {
 openai: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
-{ value: 'gpt-image-2-vip', label: 'GPT Image 2 VIP (高清)' },
+{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare (新)' },
+{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (新)' },
 ],
 packy: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
+{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare (新)' },
+{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (新)' },
 ],
 gemini: [
 { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
@@ -486,8 +497,9 @@ minimax: [
 };
 
 const HINTS = {
-'gpt-image-2': '1K 及以下尺寸，价格较低',
-'gpt-image-2-vip': '2K/4K 高清尺寸，价格为标准版两倍',
+'gpt-image-2': '旧版基础模型：仅支持 1K 档尺寸；需要 2K/4K 请选 GPT Image 2.5 系列',
+'gpt-image-2.5-flare': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；后台按尺寸自动匹配 -2k/-4k',
+'gpt-image-2.5-sunburst': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；后台按尺寸自动匹配 -2k/-4k',
 'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
 'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
 'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
@@ -497,7 +509,11 @@ const HINTS = {
 // Provider-specific hint overrides
 const PROVIDER_HINTS = {
 'packy|gpt-image-2': 'PackyAPI 提供商，价格较高，仅作备选',
+'packy|gpt-image-2.5-flare': '新模型，未实测。PackyAPI 按量计费，尺寸越大费用越高，建议先用 1K 试效果',
+'packy|gpt-image-2.5-sunburst': '新模型，未实测。PackyAPI 按量计费，尺寸越大费用越高，建议先用 1K 试效果',
 };
+
+const MODEL25 = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'];
 
 function getModelHint(prov, model) {
   return PROVIDER_HINTS[prov + '|' + model] || HINTS[model] || '';
@@ -512,9 +528,10 @@ const SIZE_OVERRIDES = {
 'image-01': { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] },
 };
 
-const QUALITY_MODELS = ['gpt-image-2', 'gpt-image-2-vip'];
+const QUALITY_MODELS = ['gpt-image-2'].concat(MODEL25);
 
 // gpt-image-2 分组尺寸定义
+// 旧版 gpt-image-2（openai-hk）像素上限：约 1.57M px（原 VIP 分界），超限尺寸由 2.5 系列承担
 const VIP_PIXEL_THRESHOLD = 1659 * 948; // 1,572,852
 const SIZES = [
   { name: '自动', ratio: null, d: { '1K': null } },
@@ -560,6 +577,24 @@ subModelSel.value = current;
 }
 
 applyModelConstraints();
+}
+
+// openai-hk：2.5 按次计费同价 → 鼓励大尺寸；旧版 gpt-image-2 仅 1K 档 → 提示改用 2.5
+function updateSizePriceTip() {
+  const tip = document.getElementById('sizePriceTip');
+  const prov = providerSel.value;
+  const model = subModelSel.value;
+  if (prov === 'openai' && MODEL25.includes(model)) {
+    tip.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨（系统会自动匹配对应高清模型）';
+    tip.style.color = '#6fcf97';
+    tip.style.display = '';
+  } else if (prov === 'openai' && model === 'gpt-image-2') {
+    tip.textContent = '旧版 GPT Image 2 仅提供 1K 档尺寸；需要 2K/4K 请改用 GPT Image 2.5 系列（按次同价）';
+    tip.style.color = '#d9a441';
+    tip.style.display = '';
+  } else {
+    tip.style.display = 'none';
+  }
 }
 
 function applyModelConstraints() {
@@ -612,27 +647,14 @@ sizeSel.appendChild(opt);
     document.getElementById('orientToggleWrap').style.display = '';
     rebuildGptSizes();
 }
+updateSizePriceTip();
 }
 
-// 根据尺寸自动选择模型：≤1659x948 像素用 gpt-image-2，超过用 gpt-image-2-vip
+// 尺寸变化不再自动切换模型（VIP 已下线；2.5 系列由后台按最终尺寸路由 -2k/-4k）。
+// 保留此函数仅为兼容原有调用点，刷新提示文案。
 function updateModelForSize() {
-  const prov = providerSel.value;
-  if (prov !== 'openai') return;
-
-  const val = sizeSel.value;
-  if (val === 'auto' || val === '__custom__') {
-    subModelSel.value = 'gpt-image-2';
-  } else {
-    const parts = val.split('x');
-    const w = parseInt(parts[0]);
-    const h = parseInt(parts[1]);
-    if (!isNaN(w) && !isNaN(h) && w * h > VIP_PIXEL_THRESHOLD) {
-      subModelSel.value = 'gpt-image-2-vip';
-    } else {
-      subModelSel.value = 'gpt-image-2';
-    }
-  }
-  modelHint.textContent = getModelHint(prov, subModelSel.value);
+  modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
+  updateSizePriceTip();
 }
 
 // 重建 gpt-image-2 分组尺寸下拉框（optgroup by tier）
@@ -646,25 +668,39 @@ function rebuildGptSizes() {
   autoOpt.textContent = '自动（保持参考图比例）';
   sizeSel.appendChild(autoOpt);
 
-  // 按 tier 分组（packy 不需要 VIP 区分，gpt-image-2 直接支持全部尺寸）
+  // 按 tier 分组（packy 单模型直接支持全部尺寸；openai-hk 旧版 gpt-image-2 仅 1K 档）
   const prov = providerSel.value;
-  const tiers = prov === 'openai'
-    ? [
-        { key: '1K', label: '1K — 标准' },
-        { key: '2K', label: '2K — VIP 高清' },
-        { key: '4K', label: '4K — VIP 超高清' },
-      ]
-    : [
-        { key: '1K', label: '1K — 标准' },
-        { key: '2K', label: '2K — 贵！慎重！' },
-        { key: '4K', label: '4K — 贵！慎重！' },
-      ];
+  const model = subModelSel.value;
+  const isLegacyOpenai = (prov === 'openai' && model === 'gpt-image-2');
+  let tiers;
+  if (MODEL25.includes(model) && prov === 'openai') {
+    // openai-hk 2.5：按次计费，1K/2K/4K 同价，鼓励大尺寸
+    tiers = [
+      { key: '1K', label: '1K — 标准' },
+      { key: '2K', label: '2K — 同价' },
+      { key: '4K', label: '4K — 同价，最划算' },
+    ];
+  } else if (isLegacyOpenai) {
+    // 旧版 gpt-image-2（openai-hk）：仅 1K 档（原 VIP 的 2K/4K 职责由 2.5 系列接管）
+    tiers = [
+      { key: '1K', label: '1K — 标准（仅此档）' },
+    ];
+  } else {
+    // packy：按量计费，大尺寸费用显著更高
+    tiers = [
+      { key: '1K', label: '1K — 标准' },
+      { key: '2K', label: '2K — 贵！慎重！' },
+      { key: '4K', label: '4K — 贵！慎重！' },
+    ];
+  }
 
   tiers.forEach(tier => {
     const group = document.createElement('optgroup');
     group.label = tier.label;
     SIZES.forEach(s => {
       if (!s.d[tier.key]) return; // skip "自动"
+      // openai-hk 旧版 gpt-image-2 有像素上限（约 1.57M px，原 VIP 分界），超限尺寸不再提供
+      if (isLegacyOpenai && s.d[tier.key][0] * s.d[tier.key][1] > VIP_PIXEL_THRESHOLD) return;
       const px = s.d[tier.key];
       const [lw, lh] = currentOrient === 'portrait' ? [px[1], px[0]] : px;
       const opt = document.createElement('option');
@@ -675,11 +711,13 @@ function rebuildGptSizes() {
     if (group.children.length > 0) sizeSel.appendChild(group);
   });
 
-  // 自定义
-  const custom = document.createElement('option');
-  custom.value = '__custom__';
-  custom.textContent = '自定义...';
-  sizeSel.appendChild(custom);
+  // 自定义（openai-hk 旧版 gpt-image-2 不提供，可能超出其像素上限）
+  if (!isLegacyOpenai) {
+    const custom = document.createElement('option');
+    custom.value = '__custom__';
+    custom.textContent = '自定义...';
+    sizeSel.appendChild(custom);
+  }
 
   // 恢复选中项
   if ([...sizeSel.options].some(o => o.value === prev)) {
@@ -717,24 +755,7 @@ sizeSel.addEventListener('change', () => {
   if (!isCustom && sizeSel.value !== 'auto') updateModelForSize();
 });
 
-// 自定义尺寸输入时也自动切换模型
-document.getElementById('sizeCustom').addEventListener('blur', () => {
-  if (providerSel.value !== 'openai') return;
-  const raw = document.getElementById('sizeCustom').value.trim().replace(/\*/g, 'x');
-  const parts = raw.split('x');
-  if (parts.length === 2) {
-    const pw = parseInt(parts[0]), ph = parseInt(parts[1]);
-    if (!isNaN(pw) && !isNaN(ph)) {
-      if (pw * ph > VIP_PIXEL_THRESHOLD) {
-        subModelSel.value = 'gpt-image-2-vip';
-      } else {
-        subModelSel.value = 'gpt-image-2';
-      }
-      modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
-    }
-  }
-});
-
+// 自定义尺寸不再自动切换模型（VIP 已下线；2.5 系列由后台按最终尺寸路由）
 // 自定义尺寸长宽比校验提示（不阻止提交，后端会自动合规调整）
 const MAX_CUSTOM_ASPECT_RATIO = 3; // 长边:短边，与后端 _SIZE_MAX_ASPECT_RATIO 保持一致
 document.getElementById('sizeCustom').addEventListener('input', () => {
@@ -1031,19 +1052,9 @@ form.addEventListener('submit', async e => {
     // 支持 1920*1080 格式（* 号）
     sizeVal = sizeVal.replace(/\*/g, 'x');
 
-    // 根据实际尺寸自动选择模型
-    let finalModel = subModelSel.value;
-    if (providerSel.value === 'openai' && sizeVal && sizeVal !== 'auto') {
-      const parts = sizeVal.split('x');
-      if (parts.length === 2) {
-        const pw = parseInt(parts[0]), ph = parseInt(parts[1]);
-        if (!isNaN(pw) && !isNaN(ph) && pw * ph > VIP_PIXEL_THRESHOLD) {
-          finalModel = 'gpt-image-2-vip';
-        } else {
-          finalModel = 'gpt-image-2';
-        }
-      }
-    }
+    // 模型由用户在下拉框选择原样提交：
+    // 2.5 flare/sunburst 由后台按最终尺寸路由 -2k/-4k 变体（仅 openai-hk）
+    const finalModel = subModelSel.value;
 
     const body = {
       model: providerSel.value,
