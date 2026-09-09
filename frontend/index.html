@@ -509,9 +509,9 @@ line-height: 1;
   <img id="imgModalSrc" src="" alt="">
 </div>
 
-<!-- 费用提示悬浮气泡（右下角） -->
-<div class="price-bubble hidden" id="priceBubble">
-  <div class="price-bubble-panel" id="priceBubblePanel">
+<!-- 费用提示悬浮气泡（右下角，默认展开） -->
+<div class="price-bubble" id="priceBubble">
+  <div class="price-bubble-panel open" id="priceBubblePanel">
     <button type="button" class="price-bubble-close" id="priceBubbleClose" title="关闭">×</button>
     <span id="priceBubbleText"></span>
     <div class="bubble-arrow"></div>
@@ -539,13 +539,13 @@ line-height: 1;
 const MODELS = {
 openai: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
-{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare (新)' },
-{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (新)' },
+{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
+{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst' },
 ],
 packy: [
 { value: 'gpt-image-2', label: 'GPT Image 2' },
-{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare (新)' },
-{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (新)' },
+{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
+{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst' },
 ],
 gemini: [
 { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
@@ -559,8 +559,8 @@ minimax: [
 
 const HINTS = {
 'gpt-image-2': '旧版基础模型：仅支持 1K 档尺寸；需要 2K/4K 请选 GPT Image 2.5 系列',
-'gpt-image-2.5-flare': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；服务商按所选尺寸自动分档出图',
-'gpt-image-2.5-sunburst': '新模型，未实测。OpenAI-HK 按次计费：1K/2K/4K 同价，选大尺寸更划算；服务商按所选尺寸自动分档出图',
+'gpt-image-2.5-flare': 'GPT Image 2.5：OpenAI-HK 按次收费，1K/2K/4K 同价，能用 4K 就用 4K；服务商按所选尺寸自动分档',
+'gpt-image-2.5-sunburst': 'GPT Image 2.5：OpenAI-HK 按次收费，1K/2K/4K 同价，能用 4K 就用 4K；服务商按所选尺寸自动分档',
 'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
 'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
 'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
@@ -569,9 +569,9 @@ const HINTS = {
 
 // Provider-specific hint overrides
 const PROVIDER_HINTS = {
-'packy|gpt-image-2': 'PackyAPI 提供商，价格较高，仅作备选',
-'packy|gpt-image-2.5-flare': '新模型，未实测。PackyAPI 按量计费，尺寸越大费用越高，建议先用 1K 试效果',
-'packy|gpt-image-2.5-sunburst': '新模型，未实测。PackyAPI 按量计费，尺寸越大费用越高，建议先用 1K 试效果',
+'packy|gpt-image-2': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
+'packy|gpt-image-2.5-flare': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
+'packy|gpt-image-2.5-sunburst': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
 };
 
 const MODEL25 = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'];
@@ -640,25 +640,14 @@ subModelSel.value = current;
 applyModelConstraints();
 }
 
-// openai-hk：2.5 按次计费同价 → 气泡鼓励大尺寸；旧版 gpt-image-2 仅 1K 档 → 气泡提示改用 2.5。
-// 气泡仅在有费用提示时显示（右下角悬浮），点击 💡 展开/收起对话气泡。
+// 费用策略提示：固定文案（右下角气泡，默认展开，💡/× 可开合）
 function updateSizePriceTip() {
-  const bubble = document.getElementById('priceBubble');
   const textEl = document.getElementById('priceBubbleText');
-  const prov = providerSel.value;
-  const model = subModelSel.value;
-  if (prov === 'openai' && MODEL25.includes(model)) {
-    bubble.classList.remove('hidden');
-    textEl.textContent = 'OpenAI-HK 2.5 按次计费：1K/2K/4K 同价，尺寸越大越划算，推荐直接选 4K ✨ 服务商会按所选尺寸自动分档出图';
-    textEl.style.color = '#6fcf97';
-  } else if (prov === 'openai' && model === 'gpt-image-2') {
-    bubble.classList.remove('hidden');
-    textEl.textContent = '旧版 GPT Image 2 仅提供 1K 档尺寸；需要 2K/4K 请改用 GPT Image 2.5 系列（按次同价）';
-    textEl.style.color = '#d9a441';
-  } else {
-    bubble.classList.add('hidden');
-    document.getElementById('priceBubblePanel').classList.remove('open');
-  }
+  if (textEl.getAttribute('data-set')) return;
+  textEl.innerHTML = '✨ GPT Image 2.5 新模型已可使用<br>'
+    + '费用策略：<b>1K 及以下</b>用 PackyAPI 更省；<b>1K 以上</b>用 OpenAI-HK<br>'
+    + 'OpenAI-HK 按次收费（尺寸同价），能用 <b>4K</b> 就用 4K';
+  textEl.setAttribute('data-set', '1');
 }
 document.getElementById('priceBubbleBtn').addEventListener('click', () => {
   document.getElementById('priceBubblePanel').classList.toggle('open');
