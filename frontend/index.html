@@ -8,16 +8,55 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html, body { height: 100%; }
 body {
 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 background: #0a0a0f;
 color: #e5e5e5;
-min-height: 100vh;
+height: 100vh;
+overflow: hidden;
+display: flex;
+flex-direction: column;
 }
 
-.container { max-width: 680px; margin: 0 auto; padding: 40px 20px; }
+.topbar {
+height: 48px;
+flex-shrink: 0;
+border-bottom: 1px solid #2a2a35;
+display: flex;
+align-items: center;
+justify-content: space-between;
+padding: 0 20px;
+}
+.brand {
+font-size: 1.12rem;
+font-weight: 700;
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+-webkit-background-clip: text;
+-webkit-text-fill-color: transparent;
+background-clip: text;
+}
+.top-links { display: flex; gap: 16px; }
+.top-links a { color: #667eea; text-decoration: none; font-size: 0.8rem; }
 
-header { text-align: center; margin-bottom: 32px; }
+.shell {
+flex: 1;
+min-height: 0;
+display: grid;
+grid-template-columns: minmax(360px, 25%) minmax(0, 1fr);
+}
+
+.hint-bar {
+flex-shrink: 0;
+border-top: 1px solid #2a2a35;
+background: #101016;
+padding: 8px 16px;
+font-size: 0.82rem;
+line-height: 1.5;
+color: #9aa0b8;
+text-align: center;
+}
+.hint-bar b { color: #e5e5e5; font-weight: 600; }
 
 h1 {
 font-size: 2rem;
@@ -34,28 +73,80 @@ margin-bottom: 6px;
 /* 中文优化 */
 label { text-transform: none; }
 
-.card {
+.left-pane {
 background: #141419;
-border: 1px solid #2a2a35;
-border-radius: 16px;
-padding: 28px;
+border-right: 1px solid #2a2a35;
+overflow-y: auto;
+padding: 12px 16px 10px;
+display: flex;
+flex-direction: column;
+min-height: 0;
+}
+#form {
+flex: 1;
+min-height: 0;
+display: flex;
+flex-direction: column;
+}
+.right-pane {
+background: #0c0c12;
+display: flex;
+flex-direction: column;
+min-width: 0;
+min-height: 0;
+position: relative;
 }
 
-.field { margin-bottom: 20px; }
+.card {
+background: transparent;
+border: none;
+border-radius: 0;
+padding: 0;
+}
+
+.field { margin-bottom: 10px; flex-shrink: 0; }
+
+.prompt-field {
+flex: 1 1 auto;
+flex-shrink: 1;
+min-height: calc(4lh + 18px + 1.8rem);
+max-height: calc(12lh + 18px + 1.8rem);
+display: flex;
+flex-direction: column;
+margin-bottom: 10px;
+}
+.prompt-field textarea {
+flex: 1 1 auto;
+line-height: 1.5;
+min-height: calc(4lh + 18px);
+max-height: calc(12lh + 18px);
+height: auto;
+resize: vertical;
+overflow-y: auto;
+}
+.prompt-field.is-resized {
+flex: 0 0 auto;
+max-height: none;
+min-height: 0;
+}
+.prompt-field.is-resized textarea {
+flex: none;
+max-height: none;
+}
 
 label {
 display: block;
-font-size: 0.8rem;
+font-size: 0.85rem;
 font-weight: 500;
 color: #888;
-margin-bottom: 8px;
-text-transform: uppercase;
-letter-spacing: 0.05em;
+margin-bottom: 6px;
+text-transform: none;
+letter-spacing: 0.02em;
 }
 
 select, textarea, input[type="text"] {
 width: 100%;
-padding: 11px 14px;
+padding: 9px 12px;
 background: #1a1a22;
 border: 1px solid #2a2a35;
 border-radius: 8px;
@@ -69,7 +160,7 @@ outline: none;
 border-color: #667eea;
 }
 
-textarea { min-height: 100px; resize: vertical; }
+textarea { min-height: 0; resize: vertical; }
 
 .optimize-btn {
   display: inline-block;
@@ -94,16 +185,30 @@ textarea { min-height: 100px; resize: vertical; }
   50% { opacity: 0.4; }
 }
 
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: end; }
+.row { display: grid; grid-template-columns: 3fr 1fr; gap: 10px; align-items: end; }
+
+.ref-layout {
+display: flex;
+flex-wrap: wrap;
+gap: 8px;
+align-items: stretch;
+}
 
 .upload-area {
 border: 2px dashed #2a2a35;
 border-radius: 10px;
-padding: 24px;
+padding: 8px;
 text-align: center;
 cursor: pointer;
 transition: all 0.2s;
 position: relative;
+flex: 1 1 128px;
+min-width: 128px;
+min-height: 128px;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
 }
 
 .upload-area:hover, .upload-area.dragover {
@@ -115,27 +220,29 @@ background: rgba(102, 126, 234, 0.05);
 position: absolute; inset: 0; opacity: 0; cursor: pointer;
 }
 
-.upload-icon { font-size: 1.6rem; margin-bottom: 6px; }
-.upload-hint { color: #555; font-size: 0.8rem; }
+.upload-icon { font-size: 1.15rem; margin-bottom: 2px; }
+.upload-hint { color: #555; font-size: 0.78rem; }
 
 #imagePreview {
-display: none;
-margin-top: 12px;
-gap: 10px;
-flex-wrap: wrap;
+display: contents;
 }
 
 #imagePreview .preview-item {
 position: relative;
-display: inline-block;
+flex: 0 0 128px;
+width: 128px;
+height: 128px;
 }
 
 #imagePreview .preview-item img {
-max-width: 100px;
-max-height: 100px;
+width: 128px;
+height: 128px;
+max-width: 128px;
+max-height: 128px;
 border-radius: 6px;
 border: 1px solid #2a2a35;
 object-fit: cover;
+display: block;
 }
 
 #imagePreview .main-badge {
@@ -204,7 +311,7 @@ line-height: 20px;
 
 .btn {
 width: 100%;
-padding: 14px;
+padding: 11px;
 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 border: none;
 border-radius: 8px;
@@ -224,7 +331,6 @@ display: none;
 text-align: center;
 padding: 32px;
 }
-
 .loader.show { display: block; }
 
 .spinner {
@@ -238,43 +344,117 @@ margin: 0 auto 12px;
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.images-grid {
-display: none;
-gap: 12px;
-margin-top: 20px;
+.stage {
+flex: 1;
+min-height: 0;
+display: flex;
+align-items: center;
+justify-content: center;
+padding: 12px 16px;
+overflow: hidden;
 }
 
-.images-grid.show { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.empty-state {
+width: min(100%, 720px);
+aspect-ratio: 16/10;
+max-height: 100%;
+border: 1px dashed #2e2e3a;
+border-radius: 16px;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+color: #6a6a78;
+gap: 8px;
+}
+.empty-state.hidden { display: none; }
+.empty-state .mark {
+width: 56px; height: 56px; border-radius: 14px;
+border: 1px solid #2e2e3a;
+display: grid; place-items: center;
+font-size: 1.35rem; color: #3d3d4a;
+}
+.empty-state p { font-size: 0.95rem; color: #7a7a88; }
+
+.images-grid {
+display: none;
+width: 100%;
+height: 100%;
+min-height: 0;
+gap: 8px;
+}
+.images-grid.show {
+display: flex;
+flex-direction: column;
+flex: 1;
+align-self: stretch;
+}
 
 .img-card {
+flex: 1;
+min-height: 0;
+display: flex;
+flex-direction: column;
 background: #1a1a22;
-border-radius: 10px;
+border-radius: 12px;
 overflow: hidden;
 border: 1px solid #2a2a35;
 }
 
 .img-card img {
+flex: 1 1 auto;
+min-height: 0;
 width: 100%;
-aspect-ratio: 1;
-object-fit: cover;
+height: 100%;
+object-fit: contain;
+object-position: center;
 display: block;
+background: #121218;
 }
 
-.img-card .actions { padding: 10px; display: flex; gap: 6px; }
+.img-card .actions {
+flex-shrink: 0;
+padding: 10px 12px;
+display: flex;
+gap: 8px;
+align-items: center;
+}
 
-.img-card button {
+.img-card .actions button {
 flex: 1;
-padding: 7px;
+padding: 10px 12px;
 background: #2a2a35;
 border: none;
-border-radius: 5px;
-color: #ccc;
-font-size: 0.8rem;
+border-radius: 8px;
+color: #eee;
+font-size: 0.9rem;
+font-weight: 600;
 cursor: pointer;
-transition: background 0.2s;
+transition: background 0.2s, opacity 0.2s;
 }
+.img-card .actions button:hover { background: #3a3a45; }
+.img-card .actions button.quote {
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+color: #fff;
+}
+.img-card .actions button.quote:hover { opacity: 0.92; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.img-card .size-tag { font-size: 0.75rem; color: #888; padding: 0 6px; white-space: nowrap; }
 
-.img-card button:hover { background: #3a3a45; }
+.quote-toast {
+position: absolute;
+top: 16px;
+left: 50%;
+transform: translateX(-50%);
+background: #1c1c28;
+border: 1px solid #3d4a88;
+color: #c9d2ff;
+font-size: 0.8rem;
+padding: 6px 14px;
+border-radius: 999px;
+display: none;
+z-index: 5;
+}
+.quote-toast.show { display: block; }
 
 .err-msg {
 display: none;
@@ -282,7 +462,7 @@ background: rgba(255, 71, 87, 0.1);
 border: 1px solid #ff4757;
 border-radius: 8px;
 padding: 14px;
-margin-top: 16px;
+margin: 0 24px 16px;
 color: #ff6b7a;
 font-size: 0.9rem;
 }
@@ -291,8 +471,8 @@ font-size: 0.9rem;
 
 .model-hint {
 font-size: 0.75rem;
-color: #555;
-margin-top: 6px;
+color: #666;
+margin-top: 4px;
 }
 
 .size-warn {
@@ -301,64 +481,22 @@ color: #d9a441;
 margin-top: 6px;
 }
 
-/* 悬浮费用提示气泡（右下角） */
-.price-bubble {
-position: fixed;
-right: 22px;
-bottom: 22px;
-z-index: 300;
-display: flex;
-flex-direction: column;
-align-items: flex-end;
+.lookup-box {
+flex-shrink: 0;
+margin-top: 8px;
+padding-top: 10px;
+border-top: 1px solid #2a2a35;
 }
-.price-bubble.hidden { display: none; }
-.price-bubble-btn {
-width: 52px; height: 52px;
-border-radius: 50%;
-background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-border: none;
-color: #fff;
-font-size: 1.3rem;
-cursor: pointer;
-box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-transition: transform 0.15s, opacity 0.2s;
+.lookup-box .field { margin-bottom: 0; }
+
+@media (max-width: 900px) {
+  body { overflow: auto; height: auto; }
+  .shell { grid-template-columns: 1fr; height: auto; }
+  .left-pane { border-right: none; border-bottom: 1px solid #2a2a35; max-height: none; overflow: visible; }
+  .right-pane { min-height: 52vh; }
+  .prompt-field { min-height: calc(4lh + 18px + 1.8rem); }
+  .prompt-field textarea { min-height: calc(4lh + 18px); }
 }
-.price-bubble-btn:hover { transform: scale(1.06); opacity: 0.92; }
-.price-bubble-panel {
-position: relative;
-width: 280px;
-background: #1a1a22;
-border: 1px solid #2a2a35;
-border-radius: 16px;
-padding: 14px 18px 12px 14px;
-margin-bottom: 12px;
-font-size: 0.8rem;
-line-height: 1.7;
-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-display: none;
-}
-.price-bubble-panel.open { display: block; }
-.price-bubble-panel .bubble-arrow {
-position: absolute;
-bottom: -7px;
-right: 17px;
-width: 12px; height: 12px;
-background: #1a1a22;
-border-right: 1px solid #2a2a35;
-border-bottom: 1px solid #2a2a35;
-transform: rotate(45deg);
-}
-.price-bubble-close {
-position: absolute;
-top: 8px; right: 10px;
-background: none;
-border: none;
-color: #666;
-font-size: 0.95rem;
-cursor: pointer;
-line-height: 1;
-}
-.price-bubble-close:hover { color: #ccc; }
 
 /* Fullscreen image modal */
 .img-modal {
@@ -397,19 +535,20 @@ line-height: 1;
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-<h1>AI Image Generator</h1>
-<p class="subtitle">OpenAI / PackyAPI / Gemini / MiniMax 图片生成服务</p>
-<a href="/gallery" style="position:absolute;top:20px;right:20px;font-size:0.8rem;color:#667eea;text-decoration:none;">🖼️ 图库</a>
-<a href="/logs" style="position:absolute;top:20px;right:80px;font-size:0.8rem;color:#667eea;text-decoration:none;">📋 日志</a>
-<a id="promptLink" style="position:absolute;top:20px;right:140px;font-size:0.8rem;color:#667eea;text-decoration:none;">💡 Prompt</a>
+<header class="topbar">
+  <div class="brand">AI Image Generator</div>
+  <nav class="top-links">
+    <a id="promptLink" href="#">Prompt</a>
+    <a href="/logs">日志</a>
+    <a href="/gallery">图库</a>
+  </nav>
 </header>
 
-<div class="card">
+<div class="shell">
+<aside class="left-pane">
 <form id="form">
 
-<div class="field">
+<div class="field" id="providerField" style="display:none;">
 <label>Provider</label>
 <select id="provider">
 <option value="openai" selected>OpenAI-HK</option>
@@ -422,24 +561,25 @@ line-height: 1;
 <div class="field">
 <label>模型</label>
 <select id="subModel">
-<!-- options injected by JS based on provider -->
+<!-- options injected by JS -->
 </select>
 <p class="model-hint" id="modelHint"></p>
 </div>
 
-<div class="field">
+<div class="field prompt-field">
 <label>提示词 <button type="button" class="optimize-btn" id="optimizeBtn" title="AI 优化提示词">✨ 优化</button></label>
-<textarea id="prompt" placeholder="描述你想要生成的图片，越详细越好..." required></textarea>
+<textarea id="prompt" rows="4" placeholder="描述你想要生成的图片，越详细越好..." required></textarea>
 </div>
 
 <div class="field">
 <label>参考图（可选）</label>
+<div class="ref-layout">
+<div id="imagePreview"></div>
 <div class="upload-area" id="uploadArea">
 <input type="file" id="imageInput" accept="image/*" multiple>
 <div class="upload-icon">&#128247;</div>
 <div class="upload-hint">点击或拖拽上传图片</div>
 </div>
-<div id="imagePreview">
 </div>
 </div>
 
@@ -471,52 +611,49 @@ line-height: 1;
 <button type="submit" class="btn" id="generateBtn">生成图片</button>
 </form>
 
-<div class="loader" id="loader">
-<div class="spinner"></div>
-<p style="color:#666;font-size:0.9rem" id="loaderText">已提交，等待任务启动...</p>
-<p style="color:#444;font-size:0.7rem;margin-top:4px;">任务ID: <code id="loaderTaskId" style="color:#667eea;user-select:all;">-</code></p>
-<div class="progress-bar-wrap" id="progressWrap" style="display:none;margin-top:12px;">
-  <div class="progress-bar" id="progressBar" style="height:6px;background:#2a2a35;border-radius:3px;overflow:hidden;">
-    <div id="progressFill" style="height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.4s ease;"></div>
-  </div>
-  <p style="color:#555;font-size:0.8rem;margin-top:6px;text-align:center;" id="progressText">0%</p>
-</div>
-</div>
-
-<div class="err-msg" id="errMsg"></div>
-
-<div class="images-grid" id="imagesGrid"></div>
-</div>
-
-<!-- 任务查询 -->
-<div class="card" style="margin-top:20px;">
+<div class="lookup-box">
 <div class="field">
 <label>查询任务结果</label>
 <div style="display:flex;gap:8px;">
-  <input type="text" id="lookupTaskId" placeholder="输入 task_id 找回丢失的生成结果" style="flex:1;">
+  <input type="text" id="lookupTaskId" placeholder="输入 task_id 找回结果" style="flex:1;">
   <button type="button" id="lookupBtn" class="optimize-btn" style="margin:0;padding:6px 16px;white-space:nowrap;">查询</button>
 </div>
-<p style="color:#555;font-size:0.7rem;margin-top:6px;">如果前端断连但生成已完成，可凭任务ID找回图片</p>
+<p style="color:#555;font-size:0.7rem;margin-top:4px;">凭任务 ID 找回断连结果</p>
 </div>
 <div class="err-msg" id="lookupErr"></div>
-<div class="images-grid" id="lookupImagesGrid"></div>
 </div>
+</aside>
+
+<section class="right-pane">
+  <div class="quote-toast" id="quoteToast">已设为下一轮参考图</div>
+  <div class="err-msg" id="errMsg"></div>
+  <div class="stage">
+    <div class="empty-state" id="emptyState">
+      <div class="mark">▭</div>
+      <p>生成结果会出现在这里</p>
+    </div>
+    <div class="loader" id="loader">
+      <div class="spinner"></div>
+      <p style="color:#666;font-size:0.9rem" id="loaderText">已提交，等待任务启动...</p>
+      <p style="color:#444;font-size:0.7rem;margin-top:4px;">任务ID: <code id="loaderTaskId" style="color:#667eea;user-select:all;">-</code></p>
+      <div class="progress-bar-wrap" id="progressWrap" style="display:none;margin-top:12px;">
+        <div class="progress-bar" id="progressBar" style="height:6px;background:#2a2a35;border-radius:3px;overflow:hidden;">
+          <div id="progressFill" style="height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.4s ease;"></div>
+        </div>
+        <p style="color:#555;font-size:0.8rem;margin-top:6px;text-align:center;" id="progressText">0%</p>
+      </div>
+    </div>
+    <div class="images-grid" id="imagesGrid"></div>
+  </div>
+</section>
 </div>
+
+<div class="hint-bar" id="hintBar"><b>Flare 主打速度</b>　·　大小同价　·　约 0.08 元/张　　<b>Sunburst 主打高精度</b>　·　大小同价　·　约 0.08 元/张</div>
 
 <!-- Fullscreen image modal -->
 <div class="img-modal" id="imgModal">
   <button class="img-modal-close" id="imgModalClose">×</button>
   <img id="imgModalSrc" src="" alt="">
-</div>
-
-<!-- 费用提示悬浮气泡（右下角，默认展开） -->
-<div class="price-bubble" id="priceBubble">
-  <div class="price-bubble-panel open" id="priceBubblePanel">
-    <button type="button" class="price-bubble-close" id="priceBubbleClose" title="关闭">×</button>
-    <span id="priceBubbleText"></span>
-    <div class="bubble-arrow"></div>
-  </div>
-  <button type="button" class="price-bubble-btn" id="priceBubbleBtn" title="费用提示">💡</button>
 </div>
 
 <script>
@@ -536,48 +673,35 @@ line-height: 1;
     }
 })();
 
-const MODELS = {
-openai: [
-{ value: 'gpt-image-2', label: 'GPT Image 2' },
-{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
-{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst' },
-],
-packy: [
-{ value: 'gpt-image-2', label: 'GPT Image 2' },
-{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
-{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst' },
-],
-gemini: [
-{ value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)' },
-{ value: 'gemini-3.1-flash-image-preview-2k', label: 'Gemini 闪存图 (2K)' },
-{ value: 'gemini-3.1-flash-image-preview-4k', label: 'Gemini 闪存图 (4K)' },
-],
-minimax: [
-{ value: 'image-01', label: 'MiniMax 图像-01' },
-]
-};
+const MODELS = [
+{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', kind: 'gpt' },
+{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst', kind: 'gpt' },
+{ value: 'gpt-image-2.5', label: 'GPT Image 2.5', kind: 'gpt' },
+{ value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)', kind: 'gemini' },
+{ value: 'gemini-3.1-flash-image-preview-2k', label: 'Gemini 闪存图 (2K)', kind: 'gemini' },
+{ value: 'gemini-3.1-flash-image-preview-4k', label: 'Gemini 闪存图 (4K)', kind: 'gemini' },
+{ value: 'image-01', label: 'MiniMax 图像-01', kind: 'minimax' },
+];
 
 const HINTS = {
-'gpt-image-2': '旧版基础模型：仅支持 1K 档尺寸；需要 2K/4K 请选 GPT Image 2.5 系列',
-'gpt-image-2.5-flare': 'GPT Image 2.5：OpenAI-HK 按次收费，1K/2K/4K 同价，能用 4K 就用 4K；服务商按所选尺寸自动分档',
-'gpt-image-2.5-sunburst': 'GPT Image 2.5：OpenAI-HK 按次收费，1K/2K/4K 同价，能用 4K 就用 4K；服务商按所选尺寸自动分档',
+'gpt-image-2.5-flare': '选择合适的模型，默认为flare',
+'gpt-image-2.5-sunburst': '选择合适的模型，默认为flare',
+'gpt-image-2.5': '选择合适的模型，默认为flare',
 'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
 'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
 'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
 'image-01': 'MiniMax 图像模型',
 };
 
-// Provider-specific hint overrides
-const PROVIDER_HINTS = {
-'packy|gpt-image-2': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
-'packy|gpt-image-2.5-flare': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
-'packy|gpt-image-2.5-sunburst': 'PackyAPI 按量计费：适合 1K 及以下小尺寸，大尺寸费用高',
-};
-
 const MODEL25 = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'];
 
-function getModelHint(prov, model) {
-  return PROVIDER_HINTS[prov + '|' + model] || HINTS[model] || '';
+function modelKind(value) {
+  const m = MODELS.find(x => x.value === value);
+  return m ? m.kind : 'gpt';
+}
+
+function getModelHint(model) {
+  return HINTS[model] || '';
 }
 
 const SIZE_OVERRIDES = {
@@ -589,11 +713,8 @@ const SIZE_OVERRIDES = {
 'image-01': { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] },
 };
 
-const QUALITY_MODELS = ['gpt-image-2'].concat(MODEL25);
+const QUALITY_MODELS = ['gpt-image-2.5'].concat(MODEL25);
 
-// gpt-image-2 分组尺寸定义
-// 旧版 gpt-image-2（openai-hk）像素上限：约 1.57M px（原 VIP 分界），超限尺寸由 2.5 系列承担
-const VIP_PIXEL_THRESHOLD = 1659 * 948; // 1,572,852
 const SIZES = [
   { name: '自动', ratio: null, d: { '1K': null } },
   { name: '16:9',  ratio: [16, 9],  d: { '1K': [1920, 1080],  '2K': [2560, 1440], '4K': [3840, 2160] } },
@@ -620,52 +741,39 @@ if (promptFromUrl) {
 }
 
 function rebuildModels() {
-const prov = providerSel.value;
-const models = MODELS[prov] || [];
 const current = subModelSel.value;
 
 subModelSel.innerHTML = '';
-models.forEach(m => {
+MODELS.forEach(m => {
 const opt = document.createElement('option');
 opt.value = m.value;
 opt.textContent = m.label;
 subModelSel.appendChild(opt);
 });
 
-// restore if still valid
-if (models.find(m => m.value === current)) {
+if (MODELS.find(m => m.value === current)) {
 subModelSel.value = current;
+} else {
+subModelSel.value = 'gpt-image-2.5-flare';
 }
 
 applyModelConstraints();
 }
 
-// 费用策略提示：固定文案（右下角气泡，默认展开，💡/× 可开合）
 function updateSizePriceTip() {
-  const textEl = document.getElementById('priceBubbleText');
-  if (textEl.getAttribute('data-set')) return;
-  textEl.innerHTML = '✨ GPT Image 2.5 新模型已可使用<br>'
-    + '费用策略：<b>1K 及以下</b>用 PackyAPI 更省；<b>1K 以上</b>用 OpenAI-HK<br>'
-    + 'OpenAI-HK 按次收费（尺寸同价），能用 <b>4K</b> 就用 4K';
-  textEl.setAttribute('data-set', '1');
+  // 底栏文案由 /api/v1/gpt-route 按当前路由模式刷新
 }
-document.getElementById('priceBubbleBtn').addEventListener('click', () => {
-  document.getElementById('priceBubblePanel').classList.toggle('open');
-});
-document.getElementById('priceBubbleClose').addEventListener('click', () => {
-  document.getElementById('priceBubblePanel').classList.remove('open');
-});
 
 function applyModelConstraints() {
 const model = subModelSel.value;
-const prov = providerSel.value;
+const kind = modelKind(model);
 
 // hint
-modelHint.textContent = getModelHint(prov, model);
+modelHint.textContent = getModelHint(model);
 
-// quality field: show for gpt-image-2, disable for others
+// quality field: show for GPT 2.5 series
 const qualitySel = document.getElementById('quality');
-if (QUALITY_MODELS.includes(model)) {
+if (QUALITY_MODELS.includes(model) || kind === 'gpt') {
   qualitySel.disabled = false;
   qualitySel.style.opacity = '';
   qualityField.querySelector('label').style.color = '';
@@ -677,7 +785,7 @@ if (QUALITY_MODELS.includes(model)) {
 
 // size label: "Aspect Ratio" for MiniMax, "Size" for others
 const sizeLabel = document.getElementById('sizeLabel');
-sizeLabel.textContent = (prov === 'minimax') ? 'Aspect Ratio' : 'Size';
+sizeLabel.textContent = (kind === 'minimax') ? 'Aspect Ratio' : 'Size';
 
 // size options
 if (SIZE_OVERRIDES[model]) {
@@ -690,7 +798,7 @@ opt.value = v;
 opt.textContent = opts.labels[i];
 sizeSel.appendChild(opt);
 });
-} else if (prov === 'minimax') {
+} else if (kind === 'minimax') {
 // MiniMax defaults to 1:1
 document.getElementById('orientToggleWrap').style.display = 'none';
 sizeSel.innerHTML = '';
@@ -702,7 +810,6 @@ opt.textContent = opts.labels[i];
 sizeSel.appendChild(opt);
 });
 } else {
-    // gpt-image-2: 分组尺寸 + 方向切换
     document.getElementById('orientToggleWrap').style.display = '';
     rebuildGptSizes();
 }
@@ -712,11 +819,11 @@ updateSizePriceTip();
 // 尺寸变化不再自动切换模型（VIP 已下线；2.5 系列由服务商按尺寸自动分档）。
 // 保留此函数仅为兼容原有调用点，刷新提示文案。
 function updateModelForSize() {
-  modelHint.textContent = getModelHint(providerSel.value, subModelSel.value);
+  modelHint.textContent = getModelHint(subModelSel.value);
   updateSizePriceTip();
 }
 
-// 重建 gpt-image-2 分组尺寸下拉框（optgroup by tier）
+// 重建 GPT 分组尺寸下拉框（optgroup by tier，不含费用文案）
 function rebuildGptSizes() {
   const prev = sizeSel.value;
   sizeSel.innerHTML = '';
@@ -727,39 +834,17 @@ function rebuildGptSizes() {
   autoOpt.textContent = '自动（保持参考图比例）';
   sizeSel.appendChild(autoOpt);
 
-  // 按 tier 分组（packy 单模型直接支持全部尺寸；openai-hk 旧版 gpt-image-2 仅 1K 档）
-  const prov = providerSel.value;
-  const model = subModelSel.value;
-  const isLegacyOpenai = (prov === 'openai' && model === 'gpt-image-2');
-  let tiers;
-  if (MODEL25.includes(model) && prov === 'openai') {
-    // openai-hk 2.5：按次计费，1K/2K/4K 大小同价，鼓励大尺寸
-    tiers = [
-      { key: '1K', label: '1K — 标准' },
-      { key: '2K', label: '2K — 大小同价' },
-      { key: '4K', label: '4K — 大小同价，最划算' },
-    ];
-  } else if (isLegacyOpenai) {
-    // 旧版 gpt-image-2（openai-hk）：仅 1K 档（原 VIP 的 2K/4K 职责由 2.5 系列接管）
-    tiers = [
-      { key: '1K', label: '1K — 标准（仅此档）' },
-    ];
-  } else {
-    // packy：按量计费，大尺寸费用显著更高 → 引导去 OpenAI-HK
-    tiers = [
-      { key: '1K', label: '1K — 标准' },
-      { key: '2K', label: '2K — 使用 OpenAI-HK 更省' },
-      { key: '4K', label: '4K — 使用 OpenAI-HK 更省' },
-    ];
-  }
+  const tiers = [
+    { key: '1K', label: '1K' },
+    { key: '2K', label: '2K' },
+    { key: '4K', label: '4K' },
+  ];
 
   tiers.forEach(tier => {
     const group = document.createElement('optgroup');
     group.label = tier.label;
     SIZES.forEach(s => {
       if (!s.d[tier.key]) return; // skip "自动"
-      // openai-hk 旧版 gpt-image-2 有像素上限（约 1.57M px，原 VIP 分界），超限尺寸不再提供
-      if (isLegacyOpenai && s.d[tier.key][0] * s.d[tier.key][1] > VIP_PIXEL_THRESHOLD) return;
       const px = s.d[tier.key];
       const [lw, lh] = currentOrient === 'portrait' ? [px[1], px[0]] : px;
       const opt = document.createElement('option');
@@ -770,13 +855,10 @@ function rebuildGptSizes() {
     if (group.children.length > 0) sizeSel.appendChild(group);
   });
 
-  // 自定义（openai-hk 旧版 gpt-image-2 不提供，可能超出其像素上限）
-  if (!isLegacyOpenai) {
-    const custom = document.createElement('option');
-    custom.value = '__custom__';
-    custom.textContent = '自定义...';
-    sizeSel.appendChild(custom);
-  }
+  const custom = document.createElement('option');
+  custom.value = '__custom__';
+  custom.textContent = '自定义...';
+  sizeSel.appendChild(custom);
 
   // 恢复选中项
   if ([...sizeSel.options].some(o => o.value === prev)) {
@@ -864,7 +946,7 @@ function handleFiles(files) {
 selectedFiles = selectedFiles.concat(files);
 renderPreviews();
 // 有参考图时默认自动（保持原图比例）
-if (selectedFiles.length > 0 && subModelSel.value.startsWith('gpt-image-2')) {
+if (selectedFiles.length > 0 && modelKind(subModelSel.value) === 'gpt') {
   sizeSel.value = 'auto';
   updateModelForSize();
 }
@@ -879,7 +961,6 @@ function promoteToMain(idx) {
 
 function renderPreviews() {
 imagePreview.innerHTML = '';
-imagePreview.style.display = selectedFiles.length ? 'flex' : 'none';
 
 selectedFiles.forEach((file, idx) => {
   const isMain = idx === 0;
@@ -927,9 +1008,6 @@ selectedFiles.forEach((file, idx) => {
 function removeFile(idx) {
 selectedFiles.splice(idx, 1);
 imageInput.value = '';
-if (selectedFiles.length === 0) {
-  imagePreview.style.display = 'none';
-}
 renderPreviews();
 }
 
@@ -997,6 +1075,7 @@ function showLoader(msg) {
 }
 
 function showGenerating(taskId) {
+  setEmptyVisible(false);
   loader.classList.add('show');
   progressWrap.style.display = 'block';
   setProgress(10, '请求已发送...');
@@ -1045,10 +1124,35 @@ function showGenerating(taskId) {
   });
 }
 
+function setEmptyVisible(show) {
+  const el = document.getElementById('emptyState');
+  if (el) el.classList.toggle('hidden', !show);
+}
+
+function showQuoteToast() {
+  const t = document.getElementById('quoteToast');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+async function quoteAsReference(dataUrl) {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const file = new File([blob], `quoted-${Date.now()}.png`, { type: blob.type || 'image/png' });
+  selectedFiles = [file];
+  renderPreviews();
+  if (modelKind(subModelSel.value) === 'gpt' && sizeSel) {
+    sizeSel.value = 'auto';
+    updateModelForSize();
+  }
+  showQuoteToast();
+}
+
 function renderImagesTo(images, gridEl) {
   if (!images.length) return;
   gridEl.innerHTML = '';
   gridEl.classList.add('show');
+  setEmptyVisible(false);
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
@@ -1069,19 +1173,29 @@ function renderImagesTo(images, gridEl) {
     const actions = document.createElement('div');
     actions.className = 'actions';
 
+    const quoteBtn = document.createElement('button');
+    quoteBtn.type = 'button';
+    quoteBtn.className = 'quote';
+    quoteBtn.textContent = '引用';
+    quoteBtn.title = '用这张图作为下一轮参考图';
+    quoteBtn.addEventListener('click', () => quoteAsReference(dataUrl));
+    actions.appendChild(quoteBtn);
+
     const dlBtn = document.createElement('button');
+    dlBtn.type = 'button';
     dlBtn.textContent = '下载';
     dlBtn.addEventListener('click', () => downloadImage(dataUrl, `img-${Date.now()}-${i+1}.png`));
     actions.appendChild(dlBtn);
 
     const openBtn = document.createElement('button');
+    openBtn.type = 'button';
     openBtn.textContent = '放大';
     openBtn.addEventListener('click', () => openImageModal(dataUrl));
     actions.appendChild(openBtn);
 
     if (img.adjusted_size) {
       const sizeTag = document.createElement('span');
-      sizeTag.style.cssText = 'font-size:0.7rem;color:#555;padding:7px 4px;';
+      sizeTag.className = 'size-tag';
       sizeTag.textContent = img.adjusted_size;
       actions.appendChild(sizeTag);
     }
@@ -1104,6 +1218,7 @@ form.addEventListener('submit', async e => {
   errMsg.classList.remove('show');
   imagesGrid.classList.remove('show');
   imagesGrid.innerHTML = '';
+  setEmptyVisible(false);
   generateBtn.disabled = true;
 
   try {
@@ -1111,12 +1226,11 @@ form.addEventListener('submit', async e => {
     // 支持 1920*1080 格式（* 号）
     sizeVal = sizeVal.replace(/\*/g, 'x');
 
-    // 模型由用户在下拉框选择原样提交：2.5 flare/sunburst 由服务商按尺寸自动分档
-    const finalModel = subModelSel.value;
-
+    const selected = subModelSel.value;
+    const kind = modelKind(selected);
     const body = {
-      model: providerSel.value,
-      sub_model: finalModel,
+      model: kind === 'gpt' ? 'auto' : kind,
+      sub_model: selected,
       prompt: document.getElementById('prompt').value,
       size: sizeVal,
       n: 1,
@@ -1160,6 +1274,9 @@ form.addEventListener('submit', async e => {
   } catch (err) {
     errMsg.textContent = err.message;
     errMsg.classList.add('show');
+    if (!imagesGrid.classList.contains('show') || !imagesGrid.innerHTML) {
+      setEmptyVisible(true);
+    }
   } finally {
     generateBtn.disabled = false;
   }
@@ -1204,7 +1321,7 @@ optimizeBtn.addEventListener('click', async () => {
 document.getElementById('lookupBtn').addEventListener('click', async () => {
   const taskId = document.getElementById('lookupTaskId').value.trim();
   const errEl = document.getElementById('lookupErr');
-  const gridEl = document.getElementById('lookupImagesGrid');
+  const gridEl = document.getElementById('imagesGrid');
   errEl.classList.remove('show');
   gridEl.classList.remove('show');
   gridEl.innerHTML = '';
@@ -1244,6 +1361,53 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
 
 // init
 rebuildModels();
+
+(function applyRefFromUrl() {
+  const ref = urlParams.get('ref');
+  if (!ref) return;
+  fetch(ref).then(r => {
+    if (!r.ok) throw new Error('ref ' + r.status);
+    return r.blob();
+  }).then(blob => {
+    const name = (ref.split('/').pop() || 'ref.png').split('?')[0];
+    const file = new File([blob], name, { type: blob.type || 'image/png' });
+    selectedFiles = [file];
+    renderPreviews();
+    if (typeof modelKind === 'function' && modelKind(subModelSel.value) === 'gpt' && sizeSel) {
+      sizeSel.value = 'auto';
+      updateModelForSize();
+    }
+  }).catch(() => {});
+})();
+
+(function () {
+  const ta = document.getElementById('prompt');
+  const field = ta && ta.closest('.prompt-field');
+  if (!ta || !field) return;
+  let startH = 0;
+  ta.addEventListener('pointerdown', (e) => {
+    startH = ta.offsetHeight;
+    const r = ta.getBoundingClientRect();
+    if ((r.right - e.clientX) < 20 && (r.bottom - e.clientY) < 20) {
+      field.classList.add('is-resized');
+    }
+  });
+  window.addEventListener('pointerup', () => {
+    if (!startH) return;
+    if (Math.abs(ta.offsetHeight - startH) > 3) {
+      field.classList.add('is-resized');
+      ta.style.height = ta.offsetHeight + 'px';
+    }
+    startH = 0;
+  });
+})();
+
+(function () {
+  fetch('/api/v1/gpt-route').then(r => r.json()).then(d => {
+    const bar = document.getElementById('hintBar');
+    if (bar && d && d.hint) bar.innerHTML = d.hint;
+  }).catch(() => {});
+})();
 </script>
 </body>
 </html>

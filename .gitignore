@@ -10,3 +10,4 @@ __pycache__/
 venv/
 SESSION_LOG.md
 test_refs/
+data/

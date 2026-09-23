@@ -47,7 +47,6 @@ _MODEL25_VARIANTS = {
     "gpt-image-2.5-sunburst-4k": "gpt-image-2.5-sunburst",
 }
 
-
 def _normalize_model25(model: str) -> str:
     """把 2.5 显式变体名（-2k/-4k）归一为基础名，其余模型名原样返回。"""
     return _MODEL25_VARIANTS.get(model, model)
@@ -494,7 +493,7 @@ def validate_image_pixels(image_base64: str) -> dict:
 
 async def generate_openai_image(
     prompt: str,
-    model: str = "gpt-image-2",
+    model: str = "gpt-image-2.5",
     image_url: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_urls: Optional[List[str]] = None,
@@ -599,11 +598,12 @@ async def generate_openai_image(
             log_info(f"参考图[0] 预处理完成：{len(processed_bytes)} 字节，API尺寸={actual_size}，用户尺寸={adjusted_size}")
 
             # Image-to-image via /v1/images/edits (multipart)
-            # PackyAPI uses field name "image", open-hk uses "image[]"
+            # PackyAPI 2.5 走 image 分组，多参考图必须用 image[]（重复 image= 会报
+            # Duplicate parameter 'image'）；open-hk 也是 image[]。gpt-image-2 已下线。
             url = f"{effective_base_url}/images/edits"
             log_info(f"Image-to-image: POST {url} (refs: {len(all_base64s)} base64 + {len(all_urls)} urls)")
 
-            field_name = "image" if is_packy else "image[]"
+            field_name = "image[]"
 
             # Build files list: first image + additional refs (validate-only, no resize)
             files = [(field_name, ("reference.png", processed_bytes, "image/png"))]

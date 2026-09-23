@@ -4,6 +4,9 @@ from typing import Optional, List
 import asyncio
 
 from image_api.services.openai_img import generate_openai_image
+from image_api.services.gpt_route import (
+    resolve_gpt_route, note_openai_output, route_status, is_retryable_sub,
+)
 from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
 from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch
@@ -17,8 +20,8 @@ router = APIRouter()
 
 
 class GenerateRequest(BaseModel):
-    model: str = "openai"
-    sub_model: str = "gpt-image-2"
+    model: str = "auto"
+    sub_model: str = "gpt-image-2.5-flare"
     prompt: str
     image_url: Optional[str] = None
     image_base64: Optional[str] = None
@@ -77,6 +80,37 @@ async def generate(request: GenerateRequest):
     return GenerateResponse(task_id=task_id, images=[])
 
 
+async def _call_gpt_provider(request: GenerateRequest, provider: str, task_id: str):
+    """Call openai-hk or Packy via the shared OpenAI-compatible client."""
+    if provider == "packy":
+        log_info("调用 PackyAPI", ctx={"task_id": task_id, "sub_model": request.sub_model})
+        return await generate_openai_image(
+            prompt=request.prompt,
+            model=request.sub_model,
+            image_url=request.image_url,
+            image_base64=request.image_base64,
+            image_urls=request.image_urls,
+            image_base64s=request.image_base64s,
+            size=request.size,
+            n=request.n,
+            quality=request.quality,
+            base_url=settings.packy_base_url,
+            api_key=settings.packy_api_key,
+        )
+    log_info("调用 open-hk GPT Image", ctx={"task_id": task_id, "sub_model": request.sub_model})
+    return await generate_openai_image(
+        prompt=request.prompt,
+        model=request.sub_model,
+        image_url=request.image_url,
+        image_base64=request.image_base64,
+        image_urls=request.image_urls,
+        image_base64s=request.image_base64s,
+        size=request.size,
+        n=request.n,
+        quality=request.quality,
+    )
+
+
 async def _run_generation(task_id: str, request: GenerateRequest):
     """Background worker that runs the actual image generation."""
     import traceback
@@ -90,34 +124,52 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         # Simulate early progress
         update_task(task_id, progress=10)
 
-        if request.model == "openai":
-            log_info("调用 open-hk GPT Image", ctx={"task_id": task_id, "sub_model": request.sub_model})
-            result = await generate_openai_image(
-                prompt=request.prompt,
-                model=request.sub_model,
-                image_url=request.image_url,
-                image_base64=request.image_base64,
-                image_urls=request.image_urls,
-                image_base64s=request.image_base64s,
-                size=request.size,
-                n=request.n,
-                quality=request.quality,
+        original_model = request.model
+        first_b64 = None
+        if request.image_base64s:
+            first_b64 = request.image_base64s[0]
+        elif request.image_base64:
+            first_b64 = request.image_base64
+
+        # GPT 自动路由：默认 openai-hk 优先；监测触发后回切 1K→openai-hk / 以上→packy。
+        # 显式 openai/packy 仍可强制指定。
+        if request.model == "auto":
+            provider, sub = resolve_gpt_route(request.size, request.sub_model, first_b64)
+            request.model = provider
+            request.sub_model = sub
+            update_task(task_id, model=provider, sub_model=sub)
+            log_info("自动路由完成", ctx={"task_id": task_id, "model": provider, "sub_model": sub, "size": request.size})
+        elif request.sub_model == "gpt-image-2":
+            # gpt-image-2 已下线
+            request.sub_model = "gpt-image-2.5-flare"
+            update_task(task_id, sub_model=request.sub_model)
+
+        if request.model in ("openai", "packy"):
+            allow_packy_retry = (
+                original_model == "auto"
+                and request.model == "openai"
+                and is_retryable_sub(request.sub_model)
             )
-        elif request.model == "packy":
-            log_info("调用 PackyAPI", ctx={"task_id": task_id, "sub_model": request.sub_model})
-            result = await generate_openai_image(
-                prompt=request.prompt,
-                model=request.sub_model,
-                image_url=request.image_url,
-                image_base64=request.image_base64,
-                image_urls=request.image_urls,
-                image_base64s=request.image_base64s,
-                size=request.size,
-                n=request.n,
-                quality=request.quality,
-                base_url=settings.packy_base_url,
-                api_key=settings.packy_api_key,
-            )
+            try:
+                result = await _call_gpt_provider(request, request.model, task_id)
+            except Exception as e:
+                if not allow_packy_retry:
+                    raise
+                log_warn(f"openai-hk 失败，改走 packy 重试: {e}", ctx={
+                    "task_id": task_id,
+                    "sub_model": request.sub_model,
+                    "size": request.size,
+                })
+                request.model = "packy"
+                update_task(task_id, model="packy", sub_model=request.sub_model)
+                result = await _call_gpt_provider(request, "packy", task_id)
+            else:
+                if request.model == "openai":
+                    note_openai_output(
+                        request.size, result,
+                        image_base64=first_b64,
+                        sub_model=request.sub_model,
+                    )
         elif request.model == "gemini":
             sub = request.sub_model
             if sub == "gemini-3.1-flash-lite-preview":
@@ -220,6 +272,12 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             raw_response=raw,
             completed_at=datetime.now().isoformat(),
         )
+
+
+@router.get("/gpt-route")
+async def gpt_route_status():
+    """Current GPT auto-routing mode (openai_first vs size_split) and hint copy."""
+    return route_status()
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
