@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     minimax_api_key: Optional[str] = None
     minimax_base_url: str = "https://api.minimaxi.com"
 
-    # PackyAPI (gpt-image-2 via packyapi.com)
+    # PackyAPI (gpt-image-2.5 via cf.api.fan)
     packy_api_key: Optional[str] = None
     packy_base_url: str = "https://www.packyapi.com/v1"
     packy_proxy: Optional[str] = None  # e.g. http://127.0.0.1:7890

@@ -26,6 +26,13 @@ class GptRouteTests(unittest.TestCase):
         importlib.reload(gpt_route)
         self.gr = gpt_route
 
+    def _openai_first(self):
+        self.gr.save_state({
+            "mode": self.gr.MODE_OPENAI_FIRST,
+            "undersize_streak": 0,
+            "reverted_at": None,
+        })
+
     def tearDown(self):
         try:
             os.unlink(self.tmp.name)
@@ -33,7 +40,14 @@ class GptRouteTests(unittest.TestCase):
             pass
         os.environ.pop("GPT_ROUTE_STATE_PATH", None)
 
+    def test_default_size_split_sends_large_to_packy(self):
+        p, _ = self.gr.resolve_gpt_route("2272x752", "gpt-image-2.5-flare")
+        self.assertEqual(p, "packy")
+        p, _ = self.gr.resolve_gpt_route("1920x1080", "gpt-image-2.5-flare")
+        self.assertEqual(p, "openai")
+
     def test_openai_first_ignores_size(self):
+        self._openai_first()
         p, sub = self.gr.resolve_gpt_route("3840x2160", "gpt-image-2.5-sunburst")
         self.assertEqual((p, sub), ("openai", "gpt-image-2.5-sunburst"))
         p, sub = self.gr.resolve_gpt_route("1024x1024", "gpt-image-2.5-flare")
@@ -51,6 +65,7 @@ class GptRouteTests(unittest.TestCase):
         self.assertEqual(p, "packy")
 
     def test_five_consecutive_undersize_reverts(self):
+        self._openai_first()
         tiny = [{"base64": _png_b64(1254, 1254)}]
         for i in range(4):
             st = self.gr.note_openai_output(
@@ -67,6 +82,7 @@ class GptRouteTests(unittest.TestCase):
         self.assertEqual(p, "packy")
 
     def test_adequate_output_resets_streak(self):
+        self._openai_first()
         tiny = [{"base64": _png_b64(800, 600)}]
         big = [{"base64": _png_b64(2560, 1440)}]
         self.gr.note_openai_output("2560x1440", tiny, sub_model="gpt-image-2.5-flare")
@@ -84,17 +100,23 @@ class GptRouteTests(unittest.TestCase):
         )
         self.assertEqual(st["undersize_streak"], 0)
 
+    def test_ultrawide_157mp_counts_as_undersize(self):
+        """2272x752 at ~1.57MP has long edge >1920; must still count."""
+        self._openai_first()
+        wide = [{"base64": _png_b64(2181, 721)}]  # 1,572,501 px, long edge 2181
+        st = self.gr.note_openai_output(
+            "2272x752", wide, sub_model="gpt-image-2.5-flare",
+        )
+        self.assertEqual(st["undersize_streak"], 1)
+        self.assertEqual(st["mode"], self.gr.MODE_OPENAI_FIRST)
+
     def test_hint_follows_mode(self):
-        st = self.gr.route_status()
-        self.assertIn("大小同价", st["hint"])
-        self.gr.save_state({
-            "mode": self.gr.MODE_SIZE_SPLIT,
-            "undersize_streak": 5,
-            "reverted_at": "now",
-        })
         st = self.gr.route_status()
         self.assertIn("Packy 按量", st["hint"])
         self.assertNotIn("大小同价", st["hint"])
+        self._openai_first()
+        st = self.gr.route_status()
+        self.assertIn("大小同价", st["hint"])
 
 
 if __name__ == "__main__":

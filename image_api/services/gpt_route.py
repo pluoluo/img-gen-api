@@ -1,11 +1,13 @@
 """GPT 2.5 flare/sunburst routing + openai-hk undersize monitor.
 
-Default mode (openai_first):
-  auto → openai-hk first; caller retries Packy on API failure.
-
-Fallback mode (size_split), entered after 5 consecutive openai-hk
-results where the user asked for >1K but the image long edge is ≤1K:
+Default mode (size_split):
   long edge ≤ 1920 → openai-hk; larger → packy.
+  openai-hk 4K is a false 1.57MP cap (confirmed 2026-09-23).
+
+Optional mode (openai_first): openai-hk first, Packy on API failure.
+Reverts to size_split after 5 consecutive undersize >1K results
+(returned pixels ≤ ~1.7MP, not just long edge — ultrawide 1.57MP
+can still have long edge > 1920).
 """
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ from image_api.services.log_helper import log_info, log_warn
 CST = timezone(timedelta(hours=8))
 
 _1K_MAX_LONG_EDGE = 1920
+# openai-hk 实测上限约 1.57MP；超宽图长边仍可能 >1920，所以不能只看长边。
+_UNDERSUZE_MAX_PIXELS = 1_700_000
 UNDERSUZE_STREAK_LIMIT = 5
 MODE_OPENAI_FIRST = "openai_first"
 MODE_SIZE_SPLIT = "size_split"
@@ -43,7 +47,7 @@ HINT_SIZE_SPLIT = (
 
 _lock = threading.Lock()
 _DEFAULT_STATE = {
-    "mode": MODE_OPENAI_FIRST,
+    "mode": MODE_SIZE_SPLIT,
     "undersize_streak": 0,
     "reverted_at": None,
 }
@@ -69,9 +73,9 @@ def load_state() -> dict:
             data = json.load(f)
         if not isinstance(data, dict):
             return _empty_state()
-        mode = data.get("mode") or MODE_OPENAI_FIRST
+        mode = data.get("mode") or MODE_SIZE_SPLIT
         if mode not in (MODE_OPENAI_FIRST, MODE_SIZE_SPLIT):
-            mode = MODE_OPENAI_FIRST
+            mode = MODE_SIZE_SPLIT
         try:
             streak = int(data.get("undersize_streak") or 0)
         except (TypeError, ValueError):
@@ -186,7 +190,11 @@ def note_openai_output(size: str, result: list,
         return load_state()
 
     got_w, got_h = got
-    undersize = max(got_w, got_h) <= _1K_MAX_LONG_EDGE
+    got_px = got_w * got_h
+    undersize = (
+        max(got_w, got_h) <= _1K_MAX_LONG_EDGE
+        or got_px <= _UNDERSUZE_MAX_PIXELS
+    )
 
     with _lock:
         state = load_state()

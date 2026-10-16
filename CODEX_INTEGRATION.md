@@ -78,7 +78,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `model` | string | 否 | 供应商：`auto`（默认，flare/sunburst 优先 openai-hk，失败再 packy）/ `openai` / `packy` / `gemini` / `minimax`。前端隐藏服务商，GPT 系列请传 `auto` |
+| `model` | string | 否 | 供应商：`auto`（默认，按尺寸分流：1K→openai-hk / 以上→packy）/ `openai` / `packy` / `gemini` / `minimax`。前端隐藏服务商，GPT 系列请传 `auto` |
 | `sub_model` | string | 否 | 具体模型，见下方「模型矩阵」，默认 `auto`。GPT 系列可选 `auto` / `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`（只传基础名，不带 `-2k/-4k`） |
 | `prompt` | string | **是** | 提示词 |
 | `image_url` | string | 否 | 单张参考图 URL（图生图） |
@@ -168,7 +168,7 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 
 | `model` | `sub_model` | 供应商/端点 | 备注 |
 |---|---|---|---|
-| `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | 优先 openai-hk，失败再 packy | **flare / sunburst 先走 openai-hk（大小同价，约 0.08 元/张）**；API 失败则同请求改走 packy。若 openai-hk 对 >1K 请求连续 5 次返回 ≤1K 图，自动切回旧规则：1K（长边 ≤ 1920）→ openai-hk，以上 → packy |
+| `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | 按尺寸分流 | **1K（长边 ≤ 1920）→ openai-hk（约 0.08）**；**以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），不要为了 2K/4K 走 openai-hk |
 | `openai` | `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | open-hk `api.openai-hk.com/v1` | 强制走 openai-hk。大小同价约 0.08；不走 packy 重试 |
 | `packy` | `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | PackyAPI `cf.api.fan/v1` | 强制走 packy。按量计费；走 **image 分组**，多参考图用 `image[]` |
 | `gemini` | `gemini-3.1-flash-image-preview` / `-2k` / `-4k` | 经 open-hk OpenAI 兼容接口转发 | 标准 / 2K / 4K |
@@ -176,10 +176,10 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 | `minimax` | `image-01`（服务端固定） | MiniMax `api.minimaxi.com/v1/image_generation` | 单参考图；`size` 映射为宽高比 |
 
 **费用策略（2026-09）：**
-- **flare / sunburst 默认走 openai-hk，大小同价，约 0.08 元/张**（现已支持最高 4K）；
-- openai-hk **失败**时，同一请求自动改走 packy 重试；
-- 监测：请求长边 > 1920，但 openai-hk 返回图长边 ≤ 1920，**连续 5 次**则自动切回旧路由（1K→openai-hk / 以上→packy）。状态见 `GET /api/v1/gpt-route`；
-- `gpt-image-2` 已下线（传入会被映射到 `gpt-image-2.5` / `gpt-image-2.5-flare`）；
+- **默认 `size_split`：1K（长边 ≤ 1920）→ openai-hk，约 0.08 元/张；以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），超宽图像素卡在 1.57MP 时长边仍可能 >1920；
+- 可选 `openai_first`（非默认）：先 openai-hk，API 失败再 packy。监测：请求 >1K 但返回长边 ≤1920 **或** 像素 ≤1.7MP，连续 5 次切回 `size_split`。状态见 `GET /api/v1/gpt-route`；
+- 显式 `openai`/`packy` 强制该提供商，不做分流/重试；
+- `gpt-image-2` 已下线（传入会被映射到 `gpt-image-2.5-flare`）；
 - 传基础名即可；显式 `-2k/-4k` 后缀仍会被 `_normalize_model25()` 归一。
 
 **尺寸合规约束（服务端自动调整，客户端传任意 WxH 即可）：**
@@ -190,7 +190,7 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 - **图生图**：保持参考图宽高比，按请求 `size` 的**宽度**等比缩放（`size` 的高度会被忽略）；
 - MiniMax 的 `size` 会被映射为宽高比：`1024x1024`→1:1、`1024x1792`→9:16、`1792x1024`→16:9、`1536x1536`→1:1、`1024x1536`→2:3、`1536x1024`→3:2（其余回退 1:1）。
 
-> 已知现象：若 openai-hk 大图又缩回约 1.57MP（长边 ≤ 1920），监测会计数；连续 5 次后 `auto` 路由自动切回 1K→openai-hk / 以上→packy。当前模式见 `GET /api/v1/gpt-route`。
+> 已知现象：openai-hk 大图会缩到约 1.57MP。当前默认已是大图走 packy。若手动切到 `openai_first`，监测会按「长边 ≤1920 或像素 ≤1.7MP」计数，连续 5 次切回 `size_split`。当前模式：`GET /api/v1/gpt-route`。
 
 **图生图内部实现（供排查问题参考，客户端无需关心）：**
 - 服务端调用 `/v1/images/edits`（multipart/form-data）；
@@ -263,8 +263,8 @@ def generate_image(prompt: str, model="auto", sub_model="auto",
 9. **图生图要求**：参考图 base64 必须是 PNG/JPEG 解码后的原始 base64；尺寸合规由服务端自动处理，客户端传 `auto` 或期望宽度即可。
 10. **运维操作在 NAS 上做**：改代码后重启服务用 `systemctl --user restart image-api.service`；看日志用 `tail -30 /tmp/image-api.log`（不是 journalctl）——这些都需要 SSH 登录 NAS 执行，Windows 客户端只需调 API。
 11. **Windows 上验证连通**：`curl http://10.40.92.99:8080/health` 返回 `{"status":"healthy"}` 即正常。
-12. **GPT 默认 auto**：`model=auto`、`sub_model=auto`（或 flare/sunburst）即可；服务端优先 openai-hk，失败再 packy。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
-13. **费用**：openai-hk 大小同价，约 0.08 元/张。仅在 openai-hk 失败改走 packy，或监测回切后的大图，才按 packy 计费。
+12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按尺寸分流：1K→openai-hk，以上→packy。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
+13. **费用**：1K 走 openai-hk 约 0.08 元/张；1K 以上走 packy 按量。不要写死「大小同价」。当前文案以 `GET /api/v1/gpt-route` 为准。
 
 ---
 
@@ -277,4 +277,4 @@ def generate_image(prompt: str, model="auto", sub_model="auto",
 - **Q: 怎么知道实际生成尺寸？** A: 结果里 `adjusted_size` 字段是服务端合规调整后的真实尺寸。
 - **Q: 任务 failed，error 提示 `This token has no access to model ...`？** A: openai-hk 的 `/v1/models` 会列出全部模型，但实际按 **key 的模型白名单** 拦截（403，~0.1s 快速返回）。去 openai-hk 控制台给该 key 勾选对应模型即可。
 - **Q: 任务 failed，error 提示 `无可用渠道 ...-4k-4k`？** A: 只在**绕过本服务直连供应商**且传了带 `-2k/-4k` 后缀的 2.5 模型名时出现（openai-hk 网关对 4K 档尺寸会重复加后缀）。走本服务不会发生——后端会把显式变体名归一为基础名。
-- **Q: 请求 2K/4K 但 openai-hk 返回的图只有约 1.57MP？** A: 该次结果仍会返回。监测会记一次「>1K 请求但输出 ≤1K」；连续 5 次后 `auto` 路由自动切回大图走 packy。当前模式：`GET /api/v1/gpt-route`。
+- **Q: 请求 2K/4K 但 openai-hk 返回的图只有约 1.57MP？** A: 所以默认 `auto` 已按尺寸分流，大图走 packy。不要为了 4K 强制 `openai`。若处于 `openai_first`，该次结果仍会返回，监测连续 5 次后切回 `size_split`。当前模式：`GET /api/v1/gpt-route`。
