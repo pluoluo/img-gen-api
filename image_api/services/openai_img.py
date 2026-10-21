@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import base64
 import io
+import json
 import os
 import socket
 import tempfile
@@ -206,6 +207,10 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
                 os.unlink(tmp_path)
 
 
+class UserFacingError(Exception):
+    """str() is safe to show on the generate page — no traceback, no PIL jargon."""
+
+
 class APIResponseError(Exception):
     """Raised when the API returns a non-200 response with its raw body."""
     def __init__(self, status: int, raw_body: str):
@@ -238,6 +243,132 @@ def _json_loads_safe(raw: str):
         return _json.loads(raw)
     except Exception:
         return None
+
+
+def _pixel_bomb_limit() -> int:
+    """Pillow raises DecompressionBombError above 2 × MAX_IMAGE_PIXELS."""
+    cap = Image.MAX_IMAGE_PIXELS
+    if not cap:
+        return 10**18
+    return int(cap) * 2
+
+
+def _peek_image_size(img_data: bytes) -> tuple[int, int]:
+    """Read WxH from headers without triggering the decompression-bomb check."""
+    prev = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None
+    try:
+        with Image.open(io.BytesIO(img_data)) as img:
+            return img.size
+    finally:
+        Image.MAX_IMAGE_PIXELS = prev
+
+
+def _oversized_ref_message(w: int, h: int) -> str:
+    yi = (w * h) / 1e8
+    return (
+        f"参考图太大（{w}×{h}，约 {yi:.2f} 亿像素），无法处理。"
+        f"请先缩小后再上传（建议长边不超过 8000 像素）。"
+    )
+
+
+def _looks_user_chinese(text: str) -> bool:
+    """Short Chinese copy we raised ourselves — safe to show on the page."""
+    if not text or len(text) > 160:
+        return False
+    banned = (
+        "Traceback", 'File "', "Exception", "httpx.", "PIL.", "<html",
+        "DOS attack", "DecompressionBomb", "stack",
+    )
+    if any(s in text for s in banned):
+        return False
+    return any("\u4e00" <= c <= "\u9fff" for c in text)
+
+
+def _http_status_public(status: int) -> str:
+    if status == 429:
+        return "请求太频繁，请稍后再试。"
+    if status in (401, 403):
+        return "图像服务认证失败，请检查密钥或模型权限。"
+    if status == 504:
+        return "图片生成超时，请稍后再试。"
+    if status in (502, 503):
+        return "上游暂时不可用，请稍后再试。"
+    return f"图像服务返回错误（HTTP {status}）。详细原因见日志页。"
+
+
+def _api_response_public(exc: "APIResponseError") -> str:
+    status = getattr(exc, "status", 0) or 0
+    msg = (getattr(exc, "api_message", None) or "").strip()
+    low = msg.lower()
+    if status == 429 or "rate limit" in low or "too many" in low:
+        return "请求太频繁，请稍后再试。"
+    if "no access to model" in low:
+        return "当前密钥没有该模型权限，请到服务商控制台开通。"
+    if status in (401, 403) or "invalid api key" in low or "incorrect api key" in low:
+        return "图像服务认证失败，请检查密钥。"
+    if status == 504 or "超时" in msg or "timeout" in low:
+        return "图片生成超时，请稍后再试。"
+    if "无可用渠道" in msg:
+        return "该模型当前无可用渠道，请换尺寸或稍后再试。"
+    if status in (502, 503) or "bad gateway" in low:
+        return "上游暂时不可用，请稍后再试。"
+    if any(k in low for k in ("content policy", "safety", "violat")):
+        return "内容未通过审核，请修改提示词后再试。"
+    if _looks_user_chinese(msg):
+        return msg[:160]
+    if status:
+        return _http_status_public(status)
+    return "图像服务返回错误。详细原因见日志页。"
+
+
+def user_facing_message(exc: BaseException) -> str:
+    """Always a short Chinese sentence for the generate page. Logs stay in /tmp."""
+    generic = "生成失败，请稍后重试。详细原因见日志页。"
+    if isinstance(exc, UserFacingError):
+        return str(exc)
+    if isinstance(exc, Image.DecompressionBombError):
+        return (
+            "参考图分辨率过大，无法处理。"
+            "请先缩小后再上传（建议长边不超过 8000 像素）。"
+        )
+    if isinstance(exc, APIResponseError):
+        return _api_response_public(exc)
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "生成超时，请稍后重试。"
+    try:
+        from PIL import UnidentifiedImageError
+        if isinstance(exc, UnidentifiedImageError):
+            return "参考图无法识别，请换一张图片再试。"
+    except ImportError:
+        pass
+    if isinstance(exc, MemoryError):
+        return "图片太大，内存不足。请先缩小后再上传。"
+    if isinstance(exc, (json.JSONDecodeError, ValueError, RuntimeError)):
+        text = str(exc) or ""
+        if _looks_user_chinese(text):
+            return text.split("\n", 1)[0][:160]
+        low = text.lower()
+        if "timeout" in low or "超时" in text:
+            return "生成超时，请稍后重试。"
+        if "wget" in low or "download" in low:
+            return "参考图下载失败，请换一张或稍后再试。"
+        if "json" in low:
+            return "上游返回无法解析。详细原因见日志页。"
+    try:
+        if isinstance(exc, httpx.TimeoutException):
+            return "生成超时，请稍后重试。"
+        if isinstance(exc, httpx.HTTPStatusError):
+            code = exc.response.status_code if exc.response is not None else 0
+            return _http_status_public(code)
+        if isinstance(exc, httpx.HTTPError):
+            return "连不上图像服务，请稍后重试。详细原因见日志页。"
+    except Exception:
+        pass
+    text = str(exc) or ""
+    if _looks_user_chinese(text):
+        return text.split("\n", 1)[0][:160]
+    return generic
 
 
 def _round_to_multiple_of_16(n: int) -> int:
@@ -423,6 +554,12 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
     try:
         # ── Step 1: decode reference image ──────────────────────────────────────
         img_data = base64.b64decode(image_base64)
+        orig_w, orig_h = _peek_image_size(img_data)
+        if orig_w * orig_h > _pixel_bomb_limit():
+            msg = _oversized_ref_message(orig_w, orig_h)
+            log_warn(msg)
+            raise UserFacingError(msg)
+
         with Image.open(io.BytesIO(img_data)) as img:
             if img.mode != "RGB":
                 img = img.convert("RGB")
@@ -449,6 +586,15 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
             finally:
                 img_resized.close()
 
+    except UserFacingError:
+        raise
+    except Image.DecompressionBombError:
+        msg = (
+            "参考图分辨率过大，无法处理。"
+            "请先缩小后再上传（建议长边不超过 8000 像素）。"
+        )
+        log_warn(msg)
+        raise UserFacingError(msg)
     except Exception as e:
         log_error(f"preprocess_reference_image failed: {e}")
         raise

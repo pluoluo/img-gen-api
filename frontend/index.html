@@ -1063,6 +1063,20 @@ const generateBtn = document.getElementById('generateBtn');
 
 let pollInterval = null;
 
+function publicError(raw) {
+  let s = raw;
+  if (s && typeof s === 'object') {
+    if (Array.isArray(s)) s = s.map(x => x.msg || x.message || '').filter(Boolean).join('；');
+    else s = s.msg || s.message || s.detail || '';
+  }
+  s = String(s || '').trim();
+  if (!s) return '生成失败，请稍后重试。详细原因见日志页。';
+  if (/Traceback|DecompressionBomb|File "|httpx\.|PIL\.|DOS attack/i.test(s)) {
+    return '生成失败，请稍后重试。详细原因见日志页。';
+  }
+  return s;
+}
+
 function setProgress(pct, label) {
   progressFill.style.width = pct + '%';
   progressTextEl.textContent = label || (pct + '%');
@@ -1114,7 +1128,7 @@ function showGenerating(taskId) {
           clearInterval(progressTimer);
           pollInterval = null;
           loader.classList.remove('show');
-          reject(new Error(data.error || '生成失败，可尝试降低分辨率'));
+          reject(new Error(publicError(data.error) || '生成失败，请稍后重试。'));
         }
         // else running: keep using time-based progress, don't override
       } catch (err) {
@@ -1255,7 +1269,7 @@ form.addEventListener('submit', async e => {
 
     if (!resp.ok) {
       const err = await resp.json();
-      throw new Error(err.detail || '生成失败，可尝试降低分辨率');
+      throw new Error(publicError(err.detail) || '生成失败，请稍后重试。');
     }
 
     const data = await resp.json();
@@ -1341,7 +1355,7 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
       renderImagesTo(data.images, gridEl);
       gridEl.classList.add('show');
     } else if (data.status === 'failed') {
-      errEl.textContent = '任务失败: ' + (data.error || '未知错误');
+      errEl.textContent = '任务失败: ' + publicError(data.error);
       errEl.classList.add('show');
     } else if (data.status === 'running' || data.status === 'pending') {
       errEl.textContent = '任务仍在生成中，请稍后再查询';

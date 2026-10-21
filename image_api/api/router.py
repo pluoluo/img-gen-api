@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from typing import Optional, List
 import asyncio
 
-from image_api.services.openai_img import generate_openai_image
+from image_api.services.openai_img import (
+    generate_openai_image, APIResponseError, UserFacingError, user_facing_message,
+)
 from image_api.services.gpt_route import (
     resolve_gpt_route, note_openai_output, route_status, is_retryable_sub,
 )
@@ -153,7 +155,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             try:
                 result = await _call_gpt_provider(request, request.model, task_id)
             except Exception as e:
-                if not allow_packy_retry:
+                if not allow_packy_retry or isinstance(e, UserFacingError):
                     raise
                 log_warn(f"openai-hk 失败，改走 packy 重试: {e}", ctx={
                     "task_id": task_id,
@@ -254,7 +256,6 @@ async def _run_generation(task_id: str, request: GenerateRequest):
 
     except Exception as e:
         import traceback
-        from image_api.services.openai_img import APIResponseError
         raw = None
         if isinstance(e, APIResponseError):
             raw = e.raw_body
@@ -268,7 +269,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         update_task(
             task_id,
             status=TaskStatus.FAILED,
-            error=f"{tb_summary}\n{full_tb}",
+            error=user_facing_message(e),
             raw_response=raw,
             completed_at=datetime.now().isoformat(),
         )
@@ -285,7 +286,7 @@ async def get_task_status(task_id: str):
     """Poll task status and return results when ready."""
     task = get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     return TaskStatusResponse(
         task_id=task.id,
@@ -331,7 +332,7 @@ async def list_gallery(
 async def get_gallery_image(record_id: str):
     rec = get_image(record_id)
     if not rec:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="图片不存在")
     return rec
 
 
@@ -339,7 +340,7 @@ async def get_gallery_image(record_id: str):
 async def delete_gallery_image(record_id: str):
     deleted = delete_image(record_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="图片不存在")
     return {"ok": True}
 
 
@@ -376,7 +377,7 @@ async def optimize_prompt(request: OptimizePromptRequest):
             return {"optimized_prompt": data.get("optimized_prompt", request.prompt)}
     except Exception as e:
         log_warn(f"Prompt优化代理失败: {e}")
-        raise HTTPException(status_code=502, detail=f"Prompt optimization unavailable: {e}")
+        raise HTTPException(status_code=502, detail="提示词优化暂时不可用，请稍后重试。")
 
 
 # ─── Logs endpoints ────────────────────────────────────────────────────
