@@ -246,6 +246,8 @@ h1 {
 }
 .copy-btn:hover { background: #5a6fd6; }
 .copy-btn.copied { background: #4caf50; }
+.copy-btn.secondary { background: #3a3f5c; }
+.copy-btn.secondary:hover { background: #4a5070; }
 
 .modal-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .modal-date { font-size: 0.75rem; color: #555; }
@@ -255,8 +257,9 @@ h1 {
   text-align: center;
   margin-top: -4px;
 }
-.modal-actions { margin-top: auto; display: flex; gap: 8px; }
-.download-btn {
+.modal-actions { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.modal-actions-row { display: flex; gap: 8px; }
+.download-btn, .action-btn {
   flex: 1;
   display: inline-block;
   background: #667eea;
@@ -268,19 +271,10 @@ h1 {
   font-size: 0.8rem;
   text-align: center;
   text-decoration: none;
+  font-family: inherit;
 }
-.download-btn:hover { background: #5a6fd6; }
-.delete-btn {
-  flex: 1;
-  background: #2a1a1a;
-  border: 1px solid #5a2a2a;
-  color: #e57373;
-  padding: 8px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-.delete-btn:hover { background: #3a2020; border-color: #7a3a3a; }
+.download-btn { width: 100%; flex: none; }
+.download-btn:hover, .action-btn:hover { background: #5a6fd6; }
 
 .close-btn {
   position: absolute;
@@ -381,14 +375,18 @@ h1 {
       <h3>提示词</h3>
       <div class="prompt-block">
         <div class="prompt-text" id="modalPrompt"></div>
-        <button class="copy-btn" id="copyBtn">📋 复制提示词</button>
+        <button class="copy-btn" id="copyBtn">复制提示词</button>
+        <button class="copy-btn secondary" id="regenBtn">再次生成</button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
       <p class="modal-date" id="modalDate"></p>
       <p class="modal-counter" id="modalCounter"></p>
       <div class="modal-actions">
-        <a id="downloadBtn" class="download-btn" href="#" download>⬇ 下载原图</a>
-        <button class="delete-btn" id="deleteBtn">🗑 删除</button>
+        <a id="downloadBtn" class="download-btn" href="#" download>下载原图</a>
+        <div class="modal-actions-row">
+          <button type="button" class="action-btn" id="quoteBtn">引用</button>
+          <button type="button" class="action-btn" id="deleteBtn">删除</button>
+        </div>
       </div>
     </div>
   </div>
@@ -591,7 +589,7 @@ function _renderModal() {
   downloadBtn.download = item.filename || 'image.png';
 
   const copyBtn = document.getElementById('copyBtn');
-  copyBtn.textContent = '📋 复制提示词';
+  copyBtn.textContent = '复制提示词';
   copyBtn.classList.remove('copied');
 
   // Counter
@@ -624,6 +622,18 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') modal.classList.remove('show');
 });
 
+function goGenerate(opts) {
+  const item = currentItems[currentIndex];
+  if (!item) return;
+  const p = new URLSearchParams();
+  if (opts.prompt && item.prompt) p.set('prompt', item.prompt);
+  if (opts.ref && item.filename) p.set('ref', '/gallery/' + item.filename);
+  window.location.href = '/?' + p.toString();
+}
+
+document.getElementById('regenBtn').addEventListener('click', () => goGenerate({ prompt: true }));
+document.getElementById('quoteBtn').addEventListener('click', () => goGenerate({ ref: true }));
+
 // Copy prompt
 document.getElementById('copyBtn').addEventListener('click', () => {
   if (!currentItem) return;
@@ -637,10 +647,10 @@ document.getElementById('copyBtn').addEventListener('click', () => {
     document.execCommand('copy');
     document.body.removeChild(ta);
     const btn = document.getElementById('copyBtn');
-    btn.textContent = '✅ 已复制';
+    btn.textContent = '已复制';
     btn.classList.add('copied');
     setTimeout(() => {
-      btn.textContent = '📋 复制提示词';
+      btn.textContent = '复制提示词';
       btn.classList.remove('copied');
     }, 1500);
   } catch(e) {
