@@ -132,11 +132,17 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             first_b64 = request.image_base64s[0]
         elif request.image_base64:
             first_b64 = request.image_base64
+        has_reference = bool(
+            first_b64 or request.image_url or request.image_urls
+        )
 
-        # GPT 自动路由：默认 openai-hk 优先；监测触发后回切 1K→openai-hk / 以上→packy。
-        # 显式 openai/packy 仍可强制指定。
+        # GPT 自动路由：size_split 下 1K→openai-hk / 以上→packy。
+        # 无参考图 + size=auto 固定 openai-hk。显式 openai/packy 仍可强制指定。
         if request.model == "auto":
-            provider, sub = resolve_gpt_route(request.size, request.sub_model, first_b64)
+            provider, sub = resolve_gpt_route(
+                request.size, request.sub_model, first_b64,
+                has_reference=has_reference,
+            )
             request.model = provider
             request.sub_model = sub
             update_task(task_id, model=provider, sub_model=sub)

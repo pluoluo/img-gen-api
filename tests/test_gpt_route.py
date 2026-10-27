@@ -64,6 +64,32 @@ class GptRouteTests(unittest.TestCase):
         p, sub = self.gr.resolve_gpt_route("2560x1440", "gpt-image-2.5-flare")
         self.assertEqual(p, "packy")
 
+    def test_auto_size_no_ref_goes_openai(self):
+        p, sub = self.gr.resolve_gpt_route("auto", "gpt-image-2.5-sunburst")
+        self.assertEqual((p, sub), ("openai", "gpt-image-2.5-sunburst"))
+        p, sub = self.gr.resolve_gpt_route(
+            "auto", "gpt-image-2.5-flare", has_reference=False,
+        )
+        self.assertEqual(p, "openai")
+
+    def test_auto_size_with_large_ref_goes_packy(self):
+        b64 = _png_b64(2560, 1440)
+        p, _ = self.gr.resolve_gpt_route("auto", "gpt-image-2.5-flare", b64)
+        self.assertEqual(p, "packy")
+
+    def test_auto_size_url_ref_skips_noref_shortcut(self):
+        # URL-only: has_reference=True so we don't take the 文生图 shortcut.
+        # Unknown pixels still estimate 1024 → openai under size_split.
+        p, _ = self.gr.resolve_gpt_route(
+            "auto", "gpt-image-2.5-flare", has_reference=True,
+        )
+        self.assertEqual(p, "openai")
+
+    def test_auto_size_openai_first_still_openai(self):
+        self._openai_first()
+        p, _ = self.gr.resolve_gpt_route("auto", "gpt-image-2.5-flare")
+        self.assertEqual(p, "openai")
+
     def test_five_consecutive_undersize_reverts(self):
         self._openai_first()
         tiny = [{"base64": _png_b64(1254, 1254)}]

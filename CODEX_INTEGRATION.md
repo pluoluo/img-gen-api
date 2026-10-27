@@ -168,7 +168,7 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 
 | `model` | `sub_model` | 供应商/端点 | 备注 |
 |---|---|---|---|
-| `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | 按尺寸分流 | **1K（长边 ≤ 1920）→ openai-hk（约 0.08）**；**以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），不要为了 2K/4K 走 openai-hk |
+| `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | 按尺寸分流 | **1K（长边 ≤ 1920）→ openai-hk（约 0.08）**；**`size=auto` 且无参考图 → openai-hk**；**以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），不要为了 2K/4K 走 openai-hk |
 | `openai` | `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | open-hk `api.openai-hk.com/v1` | 强制走 openai-hk。大小同价约 0.08；不走 packy 重试 |
 | `packy` | `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | PackyAPI `cf.api.fan/v1` | 强制走 packy。按量计费；走 **image 分组**，多参考图用 `image[]` |
 | `gemini` | `gemini-3.1-flash-image-preview` / `-2k` / `-4k` | 经 open-hk OpenAI 兼容接口转发 | 标准 / 2K / 4K |
@@ -176,7 +176,7 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 | `minimax` | `image-01`（服务端固定） | MiniMax `api.minimaxi.com/v1/image_generation` | 单参考图；`size` 映射为宽高比 |
 
 **费用策略（2026-09）：**
-- **默认 `size_split`：1K（长边 ≤ 1920）→ openai-hk，约 0.08 元/张；以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），超宽图像素卡在 1.57MP 时长边仍可能 >1920；
+- **默认 `size_split`：1K（长边 ≤ 1920）→ openai-hk，约 0.08 元/张；`size=auto` 且无参考图 → openai-hk；以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），超宽图像素卡在 1.57MP 时长边仍可能 >1920；
 - 可选 `openai_first`（非默认）：先 openai-hk，API 失败再 packy。监测：请求 >1K 但返回长边 ≤1920 **或** 像素 ≤1.7MP，连续 5 次切回 `size_split`。状态见 `GET /api/v1/gpt-route`；
 - 显式 `openai`/`packy` 强制该提供商，不做分流/重试；
 - `gpt-image-2` 已下线（传入会被映射到 `gpt-image-2.5-flare`）；
@@ -263,7 +263,7 @@ def generate_image(prompt: str, model="auto", sub_model="auto",
 9. **图生图要求**：参考图 base64 必须是 PNG/JPEG 解码后的原始 base64；尺寸合规由服务端自动处理，客户端传 `auto` 或期望宽度即可。
 10. **运维操作在 NAS 上做**：改代码后重启服务用 `systemctl --user restart image-api.service`；看日志用 `tail -30 /tmp/image-api.log`（不是 journalctl）——这些都需要 SSH 登录 NAS 执行，Windows 客户端只需调 API。
 11. **Windows 上验证连通**：`curl http://10.40.92.99:8080/health` 返回 `{"status":"healthy"}` 即正常。
-12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按尺寸分流：1K→openai-hk，以上→packy。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
+12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按尺寸分流：1K→openai-hk，`size=auto` 无参考图→openai-hk，以上→packy。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
 13. **费用**：1K 走 openai-hk 约 0.08 元/张；1K 以上走 packy 按量。不要写死「大小同价」。当前文案以 `GET /api/v1/gpt-route` 为准。
 
 ---

@@ -2,6 +2,8 @@
 
 Default mode (size_split):
   long edge ≤ 1920 → openai-hk; larger → packy.
+  size=auto with no reference image → openai-hk (text-to-image
+  falls back to ~1024; smaller returned size is accepted).
   openai-hk 4K is a false 1.57MP cap (confirmed 2026-09-23).
 
 Optional mode (openai_first): openai-hk first, Packy on API failure.
@@ -120,6 +122,17 @@ def normalize_sub(sub_model: str, *, for_packy: bool = False) -> str:
     return sub
 
 
+def _size_is_auto(size: str) -> bool:
+    return (size or "").strip().lower() == "auto"
+
+
+def _has_reference(image_base64: Optional[str],
+                   has_reference: Optional[bool]) -> bool:
+    if has_reference is not None:
+        return bool(has_reference)
+    return bool(image_base64)
+
+
 def estimate_output_wh(size: str, image_base64: Optional[str] = None) -> tuple:
     """Estimate output WxH for provider routing (does not apply API constraints)."""
     raw = (size or "").strip().lower().replace("*", "x")
@@ -150,10 +163,20 @@ def image_wh_from_b64(image_base64: Optional[str]) -> Optional[tuple]:
 
 
 def resolve_gpt_route(size: str, sub_model: str,
-                      image_base64: Optional[str] = None) -> tuple:
+                      image_base64: Optional[str] = None,
+                      has_reference: Optional[bool] = None) -> tuple:
     """Pick provider. Returns (provider, actual_sub_model)."""
-    w, h = estimate_output_wh(size, image_base64)
     mode = current_mode()
+    no_ref = not _has_reference(image_base64, has_reference)
+    # 文生图选「自动」：固定 openai-hk。不要走参考图尺寸估算，也不要
+    # 依赖 1024 回落——默认尺寸以后若变大，这条仍应进 openai-hk。
+    if mode == MODE_SIZE_SPLIT and _size_is_auto(size) and no_ref:
+        provider = "openai"
+        sub = normalize_sub(sub_model, for_packy=False)
+        log_info(f"GPT 自动路由: size=auto 无参考图 mode={mode} → {provider}/{sub}")
+        return provider, sub
+
+    w, h = estimate_output_wh(size, image_base64)
     use_openai = True
     if mode == MODE_SIZE_SPLIT:
         use_openai = max(w, h) <= _1K_MAX_LONG_EDGE
