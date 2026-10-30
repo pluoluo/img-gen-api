@@ -13,7 +13,7 @@ from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
 from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch
 from image_api.services.tasks import (
-    create_task, get_task, update_task, TaskStatus
+    create_task, get_task, update_task, attach_handle, cancel_task, TaskStatus
 )
 from image_api.services.log_helper import log_info, log_warn, log_error, read_logs, clear_logs
 from image_api.config import settings
@@ -76,8 +76,9 @@ async def generate(request: GenerateRequest):
         "has_ref": bool(request.image_url or request.image_base64 or request.image_urls or request.image_base64s),
     })
 
-    # Kick off background generation — fire and forget
-    asyncio.create_task(_run_generation(task_id, request))
+    # Kick off background generation. 句柄存进任务表：既是强引用（避免被 GC），
+    # 也让 /tasks/{id}/cancel 能真的中断上游请求。
+    attach_handle(task_id, asyncio.create_task(_run_generation(task_id, request)))
 
     return GenerateResponse(task_id=task_id, images=[])
 
@@ -260,6 +261,22 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             completed_at=datetime.now().isoformat(),
         )
 
+    except asyncio.CancelledError:
+        # 用户取消：上游 HTTP 请求已在 httpx 的 async context 退出时断开，
+        # 这里只负责把任务标成 cancelled，且绝不保存到图库。
+        log_warn("生成任务已取消（已中断上游请求）", ctx={
+            "task_id": task_id,
+            "model": request.model,
+            "sub_model": request.sub_model,
+        })
+        update_task(
+            task_id,
+            status=TaskStatus.CANCELLED,
+            error="已取消",
+            completed_at=datetime.now().isoformat(),
+        )
+        raise
+
     except Exception as e:
         import traceback
         raw = None
@@ -285,6 +302,25 @@ async def _run_generation(task_id: str, request: GenerateRequest):
 async def gpt_route_status():
     """Current GPT auto-routing mode (openai_first vs size_split) and hint copy."""
     return route_status()
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_generation(task_id: str):
+    """Cancel a running generation.
+
+    Cancels the worker asyncio task, which unwinds the pending httpx request —
+    the TCP connection is closed, so the upstream stops generating instead of
+    running to completion (and billing) after the user hit 停止.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if not cancel_task(task_id):
+        return {"task_id": task_id, "cancelled": False, "status": task.status.value}
+
+    log_info("收到取消请求，已中断上游请求", ctx={"task_id": task_id})
+    return {"task_id": task_id, "cancelled": True, "status": "cancelled"}
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)

@@ -53,6 +53,20 @@ def _normalize_model25(model: str) -> str:
     return _MODEL25_VARIANTS.get(model, model)
 
 
+def _generation_timeout(size: Optional[str] = None, default: int = 360) -> int:
+    """按长边分级返回 read 超时（秒）。
+
+    原先统一 900s：open-hk 一旦拥堵就要干等 15 分钟才回切 Packy。
+    实测正常基线 30~70s（1K/2K），故 1K/2K(≤2048) → 360s，4K(>2048) → 600s 上限。
+    """
+    try:
+        w, h = (int(v) for v in str(size).lower().split("x"))
+        long_edge = max(w, h)
+    except Exception:
+        return default
+    return 600 if long_edge > 2048 else 360
+
+
 def _make_transport(proxy: str = None):
     """Create an AsyncHTTPTransport with TCP keepalive and optional proxy."""
     extra = {}
@@ -713,11 +727,11 @@ async def generate_openai_image(
                 "has_ref": False,
             })
 
-            # Timeout based on resolution:
-            # 4K: long edge > 2048 (up to 3840)
-            # 2K: long edge == 2048
-            # 1K: long edge < 2048
-            timeout = 900
+            # Timeout based on resolution (tiered, so a congested provider
+            # fails fast and the router can fall back to Packy):
+            # 4K: long edge > 2048 → 600s (hard cap)
+            # 1K/2K: long edge ≤ 2048 → 360s
+            timeout = _generation_timeout(adjusted_size)
 
             data = await _httpx_post(
                 url=url,
@@ -777,7 +791,7 @@ async def generate_openai_image(
                 "image_count": len(files),
             })
 
-            timeout = 900
+            timeout = _generation_timeout(actual_size)
 
             data = await _httpx_post(
                 url=url,

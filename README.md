@@ -119,8 +119,11 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
   }'
 # → {"task_id":"...","images":[]}
 
-# 轮询（pending → running → completed / failed）
+# 轮询（pending → running → completed / failed / cancelled）
 curl -s http://127.0.0.1:8080/api/v1/tasks/<task_id>
+
+# 取消（真正中断上游 HTTP 请求，不会继续生成/扣费）
+curl -s -X POST http://127.0.0.1:8080/api/v1/tasks/<task_id>/cancel
 ```
 
 图生图（参考图 base64 **不要**带 `data:` 前缀）：
@@ -141,6 +144,8 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v1/tasks/{id}` | 任务状态轮询 |
+| POST | `/api/v1/tasks/{id}/cancel` | 取消任务并中断上游请求（已完成/失败的任务返回 `cancelled:false`） |
 | GET | `/api/v1/gpt-route` | 当前 GPT 路由模式与费用文案 |
 | GET | `/api/v1/gallery` | 图库列表（`limit`≤200） |
 | GET/DELETE | `/api/v1/gallery/{id}` | 单条 |
@@ -198,7 +203,7 @@ systemctl --user restart image-api.service
 tail -30 /tmp/image-api.log          # 结构化 JSON；不要用 journalctl
 ```
 
-大图可能要数分钟（上限约 900 秒）。失败时看任务的 `error` / `raw_response`。
+大图可能要数分钟（read 超时按长边分级：≤2048 → 240 秒，>2048 → 600 秒；超时即回切 Packy）。失败时看任务的 `error` / `raw_response`。
 
 常见误判：
 

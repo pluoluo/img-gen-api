@@ -636,6 +636,7 @@ border-top: 1px solid #2a2a35;
       <div class="spinner"></div>
       <p style="color:#666;font-size:0.9rem" id="loaderText">已提交，等待任务启动...</p>
       <p style="color:#444;font-size:0.7rem;margin-top:4px;">任务ID: <code id="loaderTaskId" style="color:#667eea;user-select:all;">-</code></p>
+      <button type="button" id="stopBtn" style="margin-top:10px;padding:6px 18px;border-radius:8px;border:1px solid #555;background:transparent;color:#bbb;cursor:pointer;font-size:0.8rem;">停止生成</button>
       <div class="progress-bar-wrap" id="progressWrap" style="display:none;margin-top:12px;">
         <div class="progress-bar" id="progressBar" style="height:6px;background:#2a2a35;border-radius:3px;overflow:hidden;">
           <div id="progressFill" style="height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.4s ease;"></div>
@@ -1060,8 +1061,10 @@ const progressTextEl = document.getElementById('progressText');
 const imagesGrid = document.getElementById('imagesGrid');
 const errMsg = document.getElementById('errMsg');
 const generateBtn = document.getElementById('generateBtn');
+const stopBtn = document.getElementById('stopBtn');
 
 let pollInterval = null;
+let currentTaskId = null;
 
 function publicError(raw) {
   let s = raw;
@@ -1094,6 +1097,11 @@ function showGenerating(taskId) {
   progressWrap.style.display = 'block';
   setProgress(10, '请求已发送...');
 
+  currentTaskId = taskId;
+  stopBtn.style.display = '';
+  stopBtn.disabled = false;
+  stopBtn.textContent = '停止生成';
+
   const startTime = Date.now();
   const ESTIMATED_MS = 180000; // 3 min
 
@@ -1120,13 +1128,26 @@ function showGenerating(taskId) {
           clearInterval(pollInterval);
           clearInterval(progressTimer);
           pollInterval = null;
+          currentTaskId = null;
+          stopBtn.style.display = 'none';
           setProgress(95, '收到返回，解析中...');
           loader.classList.remove('show');
           resolve(data.images || []);
+        } else if (data.status === 'cancelled') {
+          clearInterval(pollInterval);
+          clearInterval(progressTimer);
+          pollInterval = null;
+          currentTaskId = null;
+          stopBtn.style.display = 'none';
+          progressWrap.style.display = 'none';
+          loader.classList.remove('show');
+          resolve(null);  // 用户取消，不是错误
         } else if (data.status === 'failed') {
           clearInterval(pollInterval);
           clearInterval(progressTimer);
           pollInterval = null;
+          currentTaskId = null;
+          stopBtn.style.display = 'none';
           loader.classList.remove('show');
           reject(new Error(publicError(data.error) || '生成失败，请稍后重试。'));
         }
@@ -1143,11 +1164,29 @@ function setEmptyVisible(show) {
   if (el) el.classList.toggle('hidden', !show);
 }
 
-function showQuoteToast() {
+function showToast(msg) {
   const t = document.getElementById('quoteToast');
+  t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 1600);
+  setTimeout(() => t.classList.remove('show'), 1800);
 }
+
+function showQuoteToast() {
+  showToast('已设为下一轮参考图');
+}
+
+// 停止生成：取消后台任务，同时中断上游 HTTP 请求（不再继续扣费）
+stopBtn.addEventListener('click', async () => {
+  if (!currentTaskId) return;
+  stopBtn.disabled = true;
+  stopBtn.textContent = '正在取消...';
+  loaderText.textContent = '正在取消，中断上游请求...';
+  try {
+    await fetch(`/api/v1/tasks/${currentTaskId}/cancel`, { method: 'POST' });
+  } catch (e) {
+    // 轮询会兜底：任务若已结束就按 completed/failed 收尾
+  }
+});
 
 async function quoteAsReference(dataUrl) {
   const res = await fetch(dataUrl);
@@ -1276,8 +1315,15 @@ form.addEventListener('submit', async e => {
     const taskId = data.task_id;
     document.getElementById('loaderTaskId').textContent = taskId;
 
-    // Wait for generation to finish — this Promise resolves on completed, rejects on failed
+    // Wait for generation to finish — resolves on completed, null on cancelled
     const images = await showGenerating(taskId);
+
+    if (images === null) {
+      // 用户点了停止：上游请求已中断，不算失败
+      setEmptyVisible(true);
+      showToast('已取消生成，上游请求已中断');
+      return;
+    }
 
     if (images && images.length > 0) {
       renderImages(images);
