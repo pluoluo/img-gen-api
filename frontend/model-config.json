@@ -1,0 +1,295 @@
+{
+  "MODELS": [
+    {
+      "value": "gpt-image-2.5-flare",
+      "label": "GPT Image 2.5 Flare",
+      "kind": "gpt"
+    },
+    {
+      "value": "gpt-image-2.5-sunburst",
+      "label": "GPT Image 2.5 Sunburst",
+      "kind": "gpt"
+    },
+    {
+      "value": "gpt-image-2.5",
+      "label": "GPT Image 2.5",
+      "kind": "gpt"
+    },
+    {
+      "value": "gemini-3.1-flash-image-preview",
+      "label": "Gemini 闪存图 (1K)",
+      "kind": "gemini"
+    },
+    {
+      "value": "gemini-3.1-flash-image-preview-2k",
+      "label": "Gemini 闪存图 (2K)",
+      "kind": "gemini"
+    },
+    {
+      "value": "gemini-3.1-flash-image-preview-4k",
+      "label": "Gemini 闪存图 (4K)",
+      "kind": "gemini"
+    },
+    {
+      "value": "image-01",
+      "label": "MiniMax 图像-01",
+      "kind": "minimax"
+    }
+  ],
+  "HINTS": {
+    "gpt-image-2.5-flare": "选择合适的模型，默认为flare",
+    "gpt-image-2.5-sunburst": "选择合适的模型，默认为flare",
+    "gpt-image-2.5": "选择合适的模型，默认为flare",
+    "gemini-3.1-flash-image-preview": "标准分辨率，最快速度",
+    "gemini-3.1-flash-image-preview-2k": "2K 高清分辨率",
+    "gemini-3.1-flash-image-preview-4k": "4K 超高清分辨率",
+    "image-01": "MiniMax 图像模型"
+  },
+  "MODEL25": [
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst"
+  ],
+  "SIZE_OVERRIDES": {
+    "gemini-3.1-flash-image-preview": {
+      "values": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ],
+      "labels": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ]
+    },
+    "gemini-3.1-flash-image-preview-2k": {
+      "values": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ],
+      "labels": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ]
+    },
+    "gemini-3.1-flash-image-preview-4k": {
+      "values": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ],
+      "labels": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2"
+      ]
+    },
+    "image-01": {
+      "values": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:2",
+        "2:3",
+        "3:4"
+      ],
+      "labels": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:2",
+        "2:3",
+        "3:4"
+      ]
+    }
+  },
+  "QUALITY_MODELS": [
+    "gpt-image-2.5",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst"
+  ],
+  "SIZES": [
+    {
+      "name": "自动",
+      "ratio": null,
+      "d": {
+        "1K": null
+      }
+    },
+    {
+      "name": "16:9",
+      "ratio": [
+        16,
+        9
+      ],
+      "d": {
+        "1K": [
+          1920,
+          1080
+        ],
+        "2K": [
+          2560,
+          1440
+        ],
+        "4K": [
+          3840,
+          2160
+        ]
+      }
+    },
+    {
+      "name": "1:1",
+      "ratio": [
+        1,
+        1
+      ],
+      "d": {
+        "1K": [
+          1024,
+          1024
+        ],
+        "2K": [
+          2048,
+          2048
+        ],
+        "4K": [
+          2880,
+          2880
+        ]
+      }
+    },
+    {
+      "name": "4:3",
+      "ratio": [
+        4,
+        3
+      ],
+      "d": {
+        "1K": [
+          1024,
+          768
+        ],
+        "2K": [
+          2048,
+          1536
+        ],
+        "4K": [
+          3072,
+          2304
+        ]
+      }
+    },
+    {
+      "name": "3:2",
+      "ratio": [
+        3,
+        2
+      ],
+      "d": {
+        "1K": [
+          1008,
+          672
+        ],
+        "2K": [
+          2064,
+          1376
+        ],
+        "4K": [
+          3504,
+          2336
+        ]
+      }
+    },
+    {
+      "name": "5:4",
+      "ratio": [
+        5,
+        4
+      ],
+      "d": {
+        "1K": [
+          1040,
+          832
+        ],
+        "2K": [
+          2080,
+          1664
+        ],
+        "4K": [
+          3200,
+          2560
+        ]
+      }
+    },
+    {
+      "name": "A4",
+      "ratio": [
+        297,
+        210
+      ],
+      "d": {
+        "1K": [
+          1488,
+          1056
+        ],
+        "2K": [
+          2064,
+          1456
+        ],
+        "4K": [
+          3408,
+          2416
+        ]
+      }
+    },
+    {
+      "name": "21:9",
+      "ratio": [
+        21,
+        9
+      ],
+      "d": {
+        "1K": [
+          1344,
+          576
+        ],
+        "2K": [
+          2016,
+          864
+        ],
+        "4K": [
+          3808,
+          1632
+        ]
+      }
+    }
+  ]
+}

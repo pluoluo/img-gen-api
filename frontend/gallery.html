@@ -247,6 +247,9 @@ h1 {
 .copy-btn:hover { background: #5a6fd6; }
 .copy-btn.copied { background: #4caf50; }
 
+.reference-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.reference-strip a { color: inherit; font-size: 0.75rem; text-align: center; }
+.reference-strip img { display: block; width: 84px; height: 84px; object-fit: contain; border: 1px solid currentColor; border-radius: 6px; margin-bottom: 4px; }
 .modal-meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .modal-date { font-size: 0.75rem; color: #555; }
 .modal-counter {
@@ -384,6 +387,7 @@ h1 {
         <button class="copy-btn" id="copyBtn">📋 复制提示词</button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
+      <div id="modalReferences" aria-label="生成参考图"></div>
       <p class="modal-date" id="modalDate"></p>
       <p class="modal-counter" id="modalCounter"></p>
       <div class="modal-actions">
@@ -579,6 +583,29 @@ function _renderModal() {
   if (item.size) modalMeta.appendChild(buildTag(item.size));
   if (item.quality) modalMeta.appendChild(buildTag(item.quality));
   modalMeta.appendChild(buildTag(`×${item.n}`));
+
+  const references = document.getElementById('modalReferences');
+  references.replaceChildren();
+  const label = document.createElement('p');
+  label.className = 'modal-date';
+  label.textContent = item.inputs ? (item.inputs.references.length ? `参考图 ${item.inputs.references.length} 张（按提交顺序）` : '文生图 · 无参考图') : '旧记录未保存参考图';
+  references.appendChild(label);
+  const strip = document.createElement('div');
+  strip.className = 'reference-strip';
+  const inputs = (item.inputs?.references || []).map((reference, index) => ({ reference, title: `参考图 ${index + 1}` }));
+  if (item.inputs?.mask) inputs.push({ reference: item.inputs.mask, title: '局部编辑蒙版' });
+  for (const { reference, title } of inputs) {
+    const link = document.createElement('a');
+    link.href = reference.url;
+    link.download = reference.filename;
+    link.title = `下载${title}原图`;
+    const image = document.createElement('img');
+    image.src = reference.url;
+    image.alt = title;
+    link.append(image, document.createTextNode(title));
+    strip.appendChild(link);
+  }
+  references.appendChild(strip);
 
   const localSrc = `/gallery/${item.filename}`;
   const fallbackSrc = item.image_url || '';

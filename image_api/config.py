@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
+    canvas_data_dir: Optional[str] = None
+    infinite_data_dir: Optional[str] = None
+    task_data_dir: Optional[str] = None
+    infinite_frontend_dir: Optional[str] = None
+    infinite_offline_validation: bool = False
 
     class Config:
         env_file = ".env"

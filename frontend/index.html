@@ -14,6 +14,7 @@ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica N
 background: #0a0a0f;
 color: #e5e5e5;
 height: 100vh;
+height: 100dvh;
 overflow: hidden;
 display: flex;
 flex-direction: column;
@@ -84,7 +85,7 @@ min-height: 0;
 }
 #form {
 flex: 1;
-min-height: 0;
+min-height: min-content;
 display: flex;
 flex-direction: column;
 }
@@ -489,13 +490,74 @@ border-top: 1px solid #2a2a35;
 }
 .lookup-box .field { margin-bottom: 0; }
 
+/* Keep the default UI shell and its switcher together: layout must not depend
+   on loading a second stylesheet. The content scrolls; the hint stays below it. */
+#legacyWorkspace,
+#canvasWorkspace {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+#legacyWorkspace { display: flex; flex-direction: column; }
+#canvasWorkspace { position: relative; }
+#canvasWorkspace iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #0a0a0f;
+}
+#canvasLoading { padding: 24px; color: #bbb; }
+#legacyWorkspace[hidden],
+#canvasWorkspace[hidden] { display: none; }
+.top-links { align-items: center; }
+.workspace-tabs {
+  display: inline-flex;
+  align-items: center;
+  background: #1a1a22;
+  border: 1px solid #2a2a35;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.workspace-tabs button {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: #9aa0b8;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.workspace-tabs button:hover { background: #2a2a35; color: #e5e5e5; }
+.workspace-tabs button[aria-selected="true"] { background: #667eea; color: #fff; }
+.workspace-tabs button:focus-visible { outline: 2px solid #bca9ff; outline-offset: -2px; }
+
 @media (max-width: 900px) {
-  body { overflow: auto; height: auto; }
-  .shell { grid-template-columns: 1fr; height: auto; }
+  .shell {
+    grid-template-columns: 1fr;
+    grid-auto-rows: max-content;
+    overflow-y: auto;
+  }
   .left-pane { border-right: none; border-bottom: 1px solid #2a2a35; max-height: none; overflow: visible; }
   .right-pane { min-height: 52vh; }
   .prompt-field { min-height: calc(4lh + 18px + 1.8rem); }
   .prompt-field textarea { min-height: calc(4lh + 18px); }
+}
+
+@media (max-width: 600px) {
+  .topbar { padding: 0 10px; gap: 10px; }
+  .top-links { gap: 10px; }
+  .workspace-tabs button { padding: 5px 7px; font-size: 11px; }
+  .brand { font-size: 0.92rem; }
+}
+@media (max-width: 480px) {
+  .topbar { height: auto; min-height: 48px; flex-wrap: wrap; padding: 8px 10px; }
+  .top-links { flex-wrap: wrap; justify-content: flex-end; flex: 1; }
 }
 
 /* Fullscreen image modal */
@@ -537,13 +599,18 @@ border-top: 1px solid #2a2a35;
 <body>
 <header class="topbar">
   <div class="brand">AI Image Generator</div>
-  <nav class="top-links">
+  <nav class="top-links" aria-label="顶部导航">
+    <div class="workspace-tabs" role="tablist" aria-label="工作区切换">
+      <button id="legacyTab" role="tab" data-workspace="legacy" aria-controls="legacyWorkspace" aria-selected="true">原有界面</button>
+      <button id="canvasTab" role="tab" data-workspace="canvas" aria-controls="canvasWorkspace" aria-selected="false" tabindex="-1">画布工作区 · 预览</button>
+    </div>
     <a id="promptLink" href="#">Prompt</a>
     <a href="/logs">日志</a>
     <a href="/gallery">图库</a>
   </nav>
 </header>
 
+<div id="legacyWorkspace" role="tabpanel" aria-labelledby="legacyTab">
 <div class="shell">
 <aside class="left-pane">
 <form id="form">
@@ -650,6 +717,8 @@ border-top: 1px solid #2a2a35;
 
 <div class="hint-bar" id="hintBar"><b>Flare 主打速度</b>　·　1K 及以下 0.08 元/张　·　1K 以上 Packy 按量计费　　<b>Sunburst 主打高精度</b>　·　1K 及以下 0.08 元/张　·　1K 以上 Packy 按量计费</div>
 
+</div>
+<div id="canvasWorkspace" role="tabpanel" aria-labelledby="canvasTab" hidden><p id="canvasLoading" role="status">正在加载 Infinite 无限画布…</p></div>
 <!-- Fullscreen image modal -->
 <div class="img-modal" id="imgModal">
   <button class="img-modal-close" id="imgModalClose">×</button>
@@ -673,58 +742,12 @@ border-top: 1px solid #2a2a35;
     }
 })();
 
-const MODELS = [
-{ value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', kind: 'gpt' },
-{ value: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst', kind: 'gpt' },
-{ value: 'gpt-image-2.5', label: 'GPT Image 2.5', kind: 'gpt' },
-{ value: 'gemini-3.1-flash-image-preview', label: 'Gemini 闪存图 (1K)', kind: 'gemini' },
-{ value: 'gemini-3.1-flash-image-preview-2k', label: 'Gemini 闪存图 (2K)', kind: 'gemini' },
-{ value: 'gemini-3.1-flash-image-preview-4k', label: 'Gemini 闪存图 (4K)', kind: 'gemini' },
-{ value: 'image-01', label: 'MiniMax 图像-01', kind: 'minimax' },
-];
-
-const HINTS = {
-'gpt-image-2.5-flare': '选择合适的模型，默认为flare',
-'gpt-image-2.5-sunburst': '选择合适的模型，默认为flare',
-'gpt-image-2.5': '选择合适的模型，默认为flare',
-'gemini-3.1-flash-image-preview': '标准分辨率，最快速度',
-'gemini-3.1-flash-image-preview-2k': '2K 高清分辨率',
-'gemini-3.1-flash-image-preview-4k': '4K 超高清分辨率',
-'image-01': 'MiniMax 图像模型',
-};
-
-const MODEL25 = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'];
-
+const { MODELS, HINTS, MODEL25, SIZE_OVERRIDES, QUALITY_MODELS, SIZES } = __MODEL_CONFIG_JSON__;
 function modelKind(value) {
-  const m = MODELS.find(x => x.value === value);
-  return m ? m.kind : 'gpt';
+  const model = MODELS.find(item => item.value === value);
+  return model ? model.kind : 'gpt';
 }
-
-function getModelHint(model) {
-  return HINTS[model] || '';
-}
-
-const SIZE_OVERRIDES = {
-// Gemini 1K/2K/4K: all support ratio-based sizes (API interprets ratio per tier)
-'gemini-3.1-flash-image-preview': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
-'gemini-3.1-flash-image-preview-2k': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
-'gemini-3.1-flash-image-preview-4k': { values: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'], labels: ['1:1','4:3','3:4','16:9','9:16','2:3','3:2'] },
-// MiniMax: aspect ratios
-'image-01': { values: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'], labels: ['1:1','16:9','9:16','4:3','3:2','2:3','3:4'] },
-};
-
-const QUALITY_MODELS = ['gpt-image-2.5'].concat(MODEL25);
-
-const SIZES = [
-  { name: '自动', ratio: null, d: { '1K': null } },
-  { name: '16:9',  ratio: [16, 9],  d: { '1K': [1920, 1080],  '2K': [2560, 1440], '4K': [3840, 2160] } },
-  { name: '1:1',   ratio: [1, 1],   d: { '1K': [1024, 1024], '2K': [2048, 2048], '4K': [2880, 2880] } },
-  { name: '4:3',   ratio: [4, 3],   d: { '1K': [1024, 768],  '2K': [2048, 1536], '4K': [3072, 2304] } },
-  { name: '3:2',   ratio: [3, 2],   d: { '1K': [1008, 672],  '2K': [2064, 1376], '4K': [3504, 2336] } },
-  { name: '5:4',   ratio: [5, 4],   d: { '1K': [1040, 832],  '2K': [2080, 1664], '4K': [3200, 2560] } },
-  { name: 'A4',    ratio: [297, 210], d: { '1K': [1488, 1056], '2K': [2064, 1456], '4K': [3408, 2416] } },
-  { name: '21:9',  ratio: [21, 9],  d: { '1K': [1344, 576],  '2K': [2016, 864],  '4K': [3808, 1632] } },
-];
+function getModelHint(model) { return HINTS[model] || ''; }
 let currentOrient = 'landscape'; // landscape | portrait
 
 const providerSel = document.getElementById('provider');
@@ -1180,6 +1203,11 @@ function renderImagesTo(images, gridEl) {
     quoteBtn.title = '用这张图作为下一轮参考图';
     quoteBtn.addEventListener('click', () => quoteAsReference(dataUrl));
     actions.appendChild(quoteBtn);
+    const canvasBtn = document.createElement('button');
+    canvasBtn.type = 'button';
+    canvasBtn.textContent = '插入画布';
+    canvasBtn.addEventListener('click', () => window.insertIntoCanvas(dataUrl));
+    actions.appendChild(canvasBtn);
 
     const dlBtn = document.createElement('button');
     dlBtn.type = 'button';
@@ -1409,5 +1437,6 @@ rebuildModels();
   }).catch(() => {});
 })();
 </script>
+<script src="/workspace-assets/workspaces.js?v=infinite"></script>
 </body>
 </html>

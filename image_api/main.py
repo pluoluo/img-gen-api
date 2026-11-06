@@ -2,11 +2,17 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 import os
+import json
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from image_api.api import router as api_router
 from image_api.config import settings
+from image_api.api.canvas import router as canvas_router
+from image_api.api.infinite import router as infinite_router
+from image_api.api.infinite_storage import router as infinite_storage_router
+from image_api.api.infinite_provider import router as infinite_provider_router
 
 app = FastAPI(
     title="Image Generation API",
@@ -23,13 +29,65 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(canvas_router, prefix="/api/v1")
+app.include_router(infinite_router, prefix="/api/v1")
+app.include_router(infinite_storage_router, prefix="/api/v1")
+app.include_router(infinite_provider_router, prefix="/api/v1")
+
+# Build once with `cd canvas && npm ci && npm run build`; no Node production process.
+_FRONTEND = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+_INFINITE_FRONTEND = os.environ.get("INFINITE_FRONTEND_DIR", os.path.join(_FRONTEND, "infinite"))
+
+
+@app.get("/infinite", include_in_schema=False)
+def infinite_redirect():
+    return RedirectResponse("/infinite/")
+
+
+class InfiniteStaticFiles(StaticFiles):
+    """History fallback only for frontend navigation, never missing assets."""
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or "." in os.path.basename(path):
+                raise
+            return await super().get_response("index.html", scope)
+
+
+app.mount("/infinite", InfiniteStaticFiles(directory=_INFINITE_FRONTEND, html=True, check_dir=False), name="infinite")
+
+@app.get("/canvas", include_in_schema=False)
+def canvas_redirect():
+    return RedirectResponse("/canvas/")
+
+
+@app.get("/canvas/", include_in_schema=False)
+def canvas_page():
+    index = os.path.join(_FRONTEND, "canvas", "index.html")
+    if not os.path.isfile(index):
+        return HTMLResponse("<html lang='zh-CN'><meta charset='utf-8'><p>画布资源尚未构建。请在仓库中执行：cd canvas &amp;&amp; npm ci &amp;&amp; npm run build，然后刷新。</p></html>", status_code=503)
+    return FileResponse(index)
+
+
+app.mount("/workspace-assets", StaticFiles(directory=_FRONTEND), name="workspace-assets")
+app.mount("/canvas", StaticFiles(directory=os.path.join(_FRONTEND, "canvas"), html=True, check_dir=False), name="canvas")
 
 
 @app.get("/", response_class=HTMLResponse)
 def root():
+    # Keep the original UI as the default until the user approves Infinite.
+    return legacy_page()
+
+
+@app.get("/legacy", response_class=HTMLResponse)
+def legacy_page():
     html_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
+    with open(os.path.join(_FRONTEND, "model-config.json"), encoding="utf-8") as config:
+        html = html.replace("__MODEL_CONFIG_JSON__", json.dumps(json.load(config), ensure_ascii=False))
     # Inject prompt_portal_url from config so frontend doesn't need a hardcoded port
     html = html.replace(
         '<script>',
@@ -56,7 +114,8 @@ def logs_page():
 def serve_gallery_image(filename: str):
     from starlette.responses import FileResponse
     import os.path
-    fpath = f"/vol1/1000/note/memory/AI生成图片/{filename}"
+    from image_api.services.gallery import GALLERY_DIR
+    fpath = GALLERY_DIR / filename
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(fpath, media_type="image/png", headers={"Cache-Control": "public, max-age=604800, immutable"})
@@ -65,7 +124,8 @@ def serve_gallery_image(filename: str):
 @app.get("/gallery/thumb/{filename}")
 def serve_gallery_thumb(filename: str):
     from starlette.responses import FileResponse
-    fpath = f"/vol1/1000/note/memory/AI生成图片/thumbs/{filename}"
+    from image_api.services.gallery import THUMB_DIR
+    fpath = THUMB_DIR / filename
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(fpath, media_type="image/png", headers={"Cache-Control": "public, max-age=604800, immutable"})

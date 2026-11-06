@@ -1,0 +1,33 @@
+// Imports copies into a disposable browser. Does not delete or change server images.
+const {chromium}=require('../canvas/node_modules/playwright');const assert=require('node:assert/strict');const fs=require('node:fs');const crypto=require('node:crypto');
+const origin=process.env.INFINITE_TEST_URL||'http://127.0.0.1:8770';
+(async()=>{const browser=await chromium.launch({headless:true});
+try{const context=await browser.newContext({viewport:{width:1440,height:960},acceptDownloads:true});const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ const catalog=await(await context.request.get(`${origin}/api/v1/gallery?limit=1`)).json();assert(catalog.total>catalog.items.length);const first=catalog.items[0];const title=first.prompt.slice(0,48)||first.filename;
+ const original=await(await context.request.get(`${origin}/gallery/${encodeURIComponent(first.filename)}`)).body();
+ let fail=false;await page.route('**/api/v1/gallery?**',route=>fail?route.fulfill({status:503,json:{detail:'Gallery fixture unavailable'}}):route.continue());
+ await page.goto(`${origin}/infinite/assets`);await page.getByRole('button',{name:'从旧图库导入',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('button',{name:'加入我的资产',exact:true}).first().waitFor();
+ const search=dialog.getByRole('searchbox',{name:'搜索旧图库'});await search.fill(`no-match-${Date.now()}`);await search.press('Enter');await dialog.getByText('没有匹配的图片，试试其他关键词',{exact:true}).waitFor();
+ fail=true;await search.fill('green');await search.press('Enter');await dialog.getByText('图库加载失败',{exact:true}).waitFor();fail=false;await dialog.getByRole('button',{name:'重试加载',exact:true}).click();await dialog.getByRole('button',{name:'加入我的资产',exact:true}).first().waitFor();
+ const all=page.waitForResponse(response=>response.url().includes('/api/v1/gallery?')&&response.url().includes('keyword=')&&!response.url().includes('keyword=green'));
+ await search.fill('');await search.press('Enter');await all;await dialog.getByRole('button',{name:'加入我的资产',exact:true}).first().waitFor();
+ const next=page.waitForResponse(response=>response.url().includes('/api/v1/gallery?')&&response.url().includes('offset=8'));
+ await dialog.getByTitle('2',{exact:true}).click();assert.equal((await next).status(),200);
+ const back=page.waitForResponse(response=>response.url().includes('/api/v1/gallery?')&&response.url().includes('offset=0'));await dialog.getByTitle('1',{exact:true}).click();await back;
+ await dialog.locator('img').first().evaluate(image=>image.decode());await page.screenshot({path:'data/infinite-validation/gallery-desktop.png',animations:'disabled'});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:'data/infinite-validation/gallery-mobile.png',fullPage:true,animations:'disabled'});
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.setViewportSize({width:1440,height:960});
+ await dialog.getByRole('button',{name:'加入我的资产',exact:true}).first().click();await dialog.getByRole('button',{name:'已加入',exact:true}).first().waitFor();assert(await dialog.getByRole('button',{name:'已加入',exact:true}).first().isDisabled());await page.keyboard.press('Escape');
+ await page.reload();await page.getByRole('heading',{name:title,exact:true}).waitFor();
+ const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:/下\s*载/}).first().click();const download=await downloadEvent;await download.saveAs('data/infinite-validation/gallery-downloaded.png');
+ assert.equal(crypto.createHash('sha256').update(fs.readFileSync('data/infinite-validation/gallery-downloaded.png')).digest('hex'),crypto.createHash('sha256').update(original).digest('hex'));
+ await page.goto(`${origin}/infinite/image`);await page.getByRole('button',{name:'查看我的资产',exact:true}).click();const picker=page.getByRole('dialog');await picker.getByRole('tab',{name:'旧图库',exact:true}).click();await picker.getByRole('button',{name:/插\s*入/}).first().waitFor();await picker.getByRole('button',{name:/插\s*入/}).first().click();await picker.waitFor({state:'hidden'});await page.getByRole('button',{name:'开始生成',exact:true}).waitFor();
+ assert(!await page.getByText('暂无参考图，可将图片拖到这里',{exact:true}).isVisible());
+ await page.goto(`${origin}/infinite/canvas`);await page.getByRole('button',{name:'新建画布',exact:true}).first().click();await page.waitForURL('**/infinite/canvas/*');
+ await page.getByRole('button',{name:'资产',exact:true}).click();await page.getByRole('button',{name:'旧图库',exact:true}).click();const canvasPicker=page.getByRole('dialog');await canvasPicker.getByRole('button',{name:/插\s*入/}).first().click();await canvasPicker.waitFor({state:'hidden'});await page.locator('[data-node-id]').first().waitFor();
+ let saved;for(let attempt=0;attempt<50;attempt++){saved=await page.evaluate(()=>new Promise(resolve=>{const open=indexedDB.open('infinite-canvas');open.onsuccess=()=>{const db=open.result;const tx=db.transaction('app_state','readonly');const read=tx.objectStore('app_state').get('infinite-canvas:canvas_store');read.onsuccess=()=>resolve(JSON.parse(read.result||'{}'));tx.oncomplete=()=>db.close()}}));if(saved.state?.projects.some(project=>project.nodes.some(node=>node.metadata?.storageKey)))break;await page.waitForTimeout(100)}
+ assert(saved.state.projects.some(project=>project.nodes.some(node=>node.metadata?.storageKey)),'inserted image must be durably saved before refresh');
+ await page.reload();await page.locator('[data-node-id]').first().waitFor();await page.screenshot({path:'data/infinite-validation/gallery-canvas.png',animations:'disabled'});
+ assert.deepEqual(errors,[]);
+ const summary={galleryTotal:catalog.total,searchAndPagination:true,errorRetry:true,importAndRefresh:true,downloadExact:true,insertReference:true,insertCanvasAndRefresh:true,browserErrors:errors};fs.writeFileSync('data/infinite-validation/gallery-result.json',JSON.stringify(summary,null,2));console.log(JSON.stringify(summary));
+}finally{await browser.close()}})().catch(error=>{console.error(error);process.exit(1)});

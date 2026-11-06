@@ -503,6 +503,8 @@ async def generate_openai_image(
     quality: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    mask_base64: Optional[str] = None,
+    background: Optional[str] = None,
 ) -> List[dict]:
     """
     Generate images using OpenAI-compatible API (OpenAI-HK).
@@ -546,6 +548,9 @@ async def generate_openai_image(
         has_ref_image = bool(all_urls or all_base64s)
         adjusted_size = None  # default: no reference image means no size adjustment needed
 
+        if mask_base64 and not has_ref_image:
+            raise ValueError("PNG mask 必须关联第一张主参考图")
+
         if not has_ref_image:
             # Pure text-to-image via /v1/images/generations
             adjusted_size = validate_text_to_image_size(size)
@@ -558,6 +563,8 @@ async def generate_openai_image(
             }
             if quality:
                 body["quality"] = quality
+            if background:
+                body["background"] = background
 
 
 
@@ -607,6 +614,10 @@ async def generate_openai_image(
 
             # Build files list: first image + additional refs (validate-only, no resize)
             files = [(field_name, ("reference.png", processed_bytes, "image/png"))]
+            if mask_base64:
+                from image_api.services.masking import preprocess_mask
+                mask_bytes = preprocess_mask(mask_base64, first_b64, actual_size)
+                files.append(("mask", ("mask.png", mask_bytes, "image/png")))
             for i, b64 in enumerate(all_base64s[1:], start=1):
                 validate_image_pixels(b64)
                 img_data = base64.b64decode(b64)
@@ -622,6 +633,8 @@ async def generate_openai_image(
             }
             if quality:
                 data["quality"] = quality
+            if background:
+                data["background"] = background
 
             log_info(f"提交编辑请求：POST {url}", ctx={
                 "model": model,

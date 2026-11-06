@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, List, Literal
 import asyncio
+import hashlib
+import base64
 
 from image_api.services.openai_img import generate_openai_image
 from image_api.services.gpt_route import (
@@ -9,9 +11,9 @@ from image_api.services.gpt_route import (
 )
 from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
-from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch
+from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch, count_images, save_generation_inputs, reference_path
 from image_api.services.tasks import (
-    create_task, get_task, update_task, TaskStatus
+    reserve_task, get_task, update_task, get_submission, TaskStatus
 )
 from image_api.services.log_helper import log_info, log_warn, log_error, read_logs, clear_logs
 from image_api.config import settings
@@ -30,12 +32,34 @@ class GenerateRequest(BaseModel):
     size: str = "1024x1024"
     n: int = 1
     quality: Optional[str] = None
+    background: Optional[Literal["transparent"]] = None
+    mask_base64: Optional[str] = None
+    mask_reference_index: int = 0
+    preserve_outside_mask: bool = False
+    preserve_source_base64: Optional[str] = None
+    client_request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_edit(self):
+        if self.background and (self.model not in ("auto", "openai", "packy") or not self.sub_model.startswith("gpt-image")):
+            raise ValueError("当前服务仅支持 GPT Image 透明背景生成")
+        if self.mask_base64:
+            if self.model not in ("auto", "openai", "packy") or not self.sub_model.startswith("gpt-image-2"):
+                raise ValueError("所选模型不支持 PNG mask 局部编辑，请使用 GPT Image")
+            if self.mask_reference_index != 0:
+                raise ValueError("mask 仅关联第一张主参考图，请先调整参考图顺序")
+            if not (self.image_base64s or self.image_base64 or self.image_urls or self.image_url):
+                raise ValueError("mask 必须关联主参考图")
+        elif self.preserve_outside_mask or self.preserve_source_base64:
+            raise ValueError("区域外保留需要 PNG mask")
+        return self
 
 
 class ImageResult(BaseModel):
     url: Optional[str] = None
     base64: Optional[str] = None
     adjusted_size: Optional[str] = None
+    upstream_size: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -52,17 +76,64 @@ class TaskStatusResponse(BaseModel):
     raw_response: Optional[str] = None
 
 
+_submissions: dict[str, tuple[str, str]] = {}
+
+
+@router.get("/submissions/{client_request_id}")
+def find_submission(client_request_id: str):
+    submission = _submissions.get(client_request_id) or get_submission(client_request_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="提交记录不存在，服务可能已重启")
+    return {"task_id": submission[1]}
+
+
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest):
     """Start an async generation task and return task_id immediately."""
-    task_id = create_task(
-        model=request.model,
-        sub_model=request.sub_model,
-        prompt=request.prompt,
-        size=request.size,
-        quality=request.quality,
-        n=request.n,
-    )
+    if settings.infinite_offline_validation is True:
+        raise HTTPException(503, "测试服务已隔离真实生成请求，请使用模拟结果进行验收")
+    fingerprint = hashlib.sha256(request.model_dump_json().encode()).hexdigest()
+    previous = (_submissions.get(request.client_request_id) or get_submission(request.client_request_id)) if request.client_request_id else None
+    if previous:
+        previous_fingerprint, previous_task = previous
+        if previous_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="提交 ID 已用于其他输入，请创建新请求")
+        return GenerateResponse(task_id=previous_task, images=[])
+    if request.mask_base64:
+        from image_api.services.masking import validate_mask
+        try:
+            first = (request.image_base64s or [request.image_base64])[0]
+            if not first:
+                from image_api.services.openai_img import _download_image
+                urls = request.image_urls or [request.image_url]
+                first = base64.b64encode(await _download_image(urls[0])).decode()
+                request.image_base64s = [first]
+                request.image_urls = urls[1:]
+                request.image_url = None
+            validate_mask(request.mask_base64, first, request.preserve_source_base64)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Check again after URL resolution (an awaited download may race a duplicate).
+    if request.client_request_id and request.client_request_id in _submissions:
+        previous_fingerprint, previous_task = _submissions[request.client_request_id]
+        if previous_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="提交 ID 已用于其他输入")
+        return GenerateResponse(task_id=previous_task, images=[])
+    try:
+        task_id, created = reserve_task(
+            client_request_id=request.client_request_id,
+            fingerprint=fingerprint,
+            model=request.model,
+            sub_model=request.sub_model,
+            prompt=request.prompt,
+            size=request.size,
+            quality=request.quality,
+            n=request.n,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not created:
+        return GenerateResponse(task_id=task_id, images=[])
 
     log_info("生成任务已创建", ctx={
         "task_id": task_id,
@@ -74,6 +145,8 @@ async def generate(request: GenerateRequest):
         "has_ref": bool(request.image_url or request.image_base64 or request.image_urls or request.image_base64s),
     })
 
+    if request.client_request_id:
+        _submissions[request.client_request_id] = (fingerprint, task_id)
     # Kick off background generation — fire and forget
     asyncio.create_task(_run_generation(task_id, request))
 
@@ -96,6 +169,8 @@ async def _call_gpt_provider(request: GenerateRequest, provider: str, task_id: s
             quality=request.quality,
             base_url=settings.packy_base_url,
             api_key=settings.packy_api_key,
+            mask_base64=request.mask_base64,
+            background=request.background,
         )
     log_info("调用 open-hk GPT Image", ctx={"task_id": task_id, "sub_model": request.sub_model})
     return await generate_openai_image(
@@ -108,6 +183,8 @@ async def _call_gpt_provider(request: GenerateRequest, provider: str, task_id: s
         size=request.size,
         n=request.n,
         quality=request.quality,
+        mask_base64=request.mask_base64,
+        background=request.background,
     )
 
 
@@ -120,6 +197,8 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         log_info("生成任务开始执行", ctx={"task_id": task_id, "model": request.model})
 
         update_task(task_id, status=TaskStatus.RUNNING, started_at=datetime.now().isoformat())
+
+        await save_generation_inputs(task_id, request)
 
         # Simulate early progress
         update_task(task_id, progress=10)
@@ -210,6 +289,18 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         else:
             raise ValueError(f"Unknown model: {request.model}")
 
+        if request.preserve_outside_mask:
+            from image_api.services.masking import composite_outside
+            for item in result:
+                if not item.get("base64"):
+                    raise ValueError("精确保留需要可下载的生成结果，请重试结果查询")
+                data, final_size, upstream_size = composite_outside(
+                    request.preserve_source_base64 or first_b64,
+                    request.mask_base64,
+                    item["base64"],
+                )
+                item.update(base64=data, url=None, adjusted_size=final_size, upstream_size=upstream_size)
+
         img_count = len(result) if result else 0
         has_url = False
         has_base64 = False
@@ -241,6 +332,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                 quality=request.quality,
                 n=request.n,
                 image_results=result,
+                task_id=task_id,
             )
             log_info("已保存到图库", ctx={"task_id": task_id})
 
@@ -311,6 +403,7 @@ class GalleryItem(BaseModel):
     image_url: Optional[str]
     filename: str
     thumb_filename: Optional[str] = None
+    inputs: Optional[dict] = None
 
 
 class GalleryListResponse(BaseModel):
@@ -322,9 +415,23 @@ class GalleryListResponse(BaseModel):
 async def list_gallery(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
+    keyword: str = "",
 ):
-    items = get_images(limit=limit, offset=offset)
-    return GalleryListResponse(items=items, total=len(items))
+    items = get_images(limit=limit, offset=offset, keyword=keyword.strip())
+    return GalleryListResponse(items=items, total=count_images(keyword.strip()))
+
+
+@router.get("/gallery/references/{filename}")
+def get_gallery_reference(filename: str):
+    from starlette.responses import FileResponse
+    try:
+        path = reference_path(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    from PIL import Image
+    with Image.open(path) as image:
+        media_type = Image.MIME.get(image.format, "application/octet-stream")
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=604800, immutable", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/gallery/{record_id}")

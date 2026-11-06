@@ -6,14 +6,19 @@ import sqlite3
 import os
 import uuid
 import base64
+import hashlib
+import json
+import io
+import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
-GALLERY_DIR = Path("/vol1/1000/note/memory/AI生成图片")
+GALLERY_DIR = Path(os.environ.get("GALLERY_DATA_DIR", "/vol1/1000/note/memory/AI生成图片"))
 GALLERY_DB = GALLERY_DIR / ".gallery.db"
 THUMB_DIR = GALLERY_DIR / "thumbs"
-GALLERY_DIR.mkdir(exist_ok=True)
+GALLERY_DIR.mkdir(parents=True, exist_ok=True)
 THUMB_DIR.mkdir(exist_ok=True)
 
 _conn: Optional[sqlite3.Connection] = None
@@ -37,8 +42,67 @@ def _get_conn() -> sqlite3.Connection:
                 filename    TEXT NOT NULL
             )
         """)
+        _conn.executescript("""
+            CREATE TABLE IF NOT EXISTS generation_inputs (task_id TEXT PRIMARY KEY, inputs TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS image_tasks (image_id TEXT PRIMARY KEY, task_id TEXT NOT NULL);
+        """)
         _conn.commit()
     return _conn
+
+
+def _save_reference(raw: bytes) -> dict:
+    from PIL import Image
+    with Image.open(io.BytesIO(raw)) as image:
+        image.verify()
+        mime_type = Image.MIME.get(image.format, "application/octet-stream")
+    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}.get(mime_type, "img")
+    filename = hashlib.sha256(raw).hexdigest() + "." + extension
+    folder = GALLERY_DIR / "references"
+    folder.mkdir(exist_ok=True)
+    path = folder / filename
+    if not path.exists():
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=folder, delete=False) as file:
+                temporary = Path(file.name)
+                file.write(raw)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return {"filename": filename, "url": f"/api/v1/gallery/references/{filename}", "mime_type": mime_type, "bytes": len(raw)}
+
+
+async def save_generation_inputs(task_id, request):
+    """Persist original references in request order before contacting the provider."""
+    from image_api.services.openai_img import _download_image
+    inputs = {"references": [], "mask": None, "preserve_source": None}
+    for encoded in request.image_base64s or ([request.image_base64] if request.image_base64 else []):
+        inputs["references"].append(_save_reference(base64.b64decode(encoded.split(",", 1)[-1])))
+    for url in request.image_urls or ([request.image_url] if request.image_url else []):
+        inputs["references"].append(_save_reference(await _download_image(url)))
+    for field, encoded in (("mask", request.mask_base64), ("preserve_source", request.preserve_source_base64)):
+        if encoded:
+            inputs[field] = _save_reference(base64.b64decode(encoded.split(",", 1)[-1]))
+    conn = _get_conn()
+    conn.execute("INSERT OR REPLACE INTO generation_inputs VALUES (?, ?)", (task_id, json.dumps(inputs)))
+    conn.commit()
+
+
+def reference_path(filename):
+    if not re.fullmatch(r"[0-9a-f]{64}\.(png|jpg|webp|gif|img)", filename):
+        raise FileNotFoundError("参考图不存在")
+    path = GALLERY_DIR / "references" / filename
+    if not path.is_file():
+        raise FileNotFoundError("参考图不存在")
+    return path
+
+
+def _record_inputs(record_id):
+    row = _get_conn().execute("SELECT inputs FROM generation_inputs JOIN image_tasks USING (task_id) WHERE image_id = ?", (record_id,)).fetchone()
+    return json.loads(row[0]) if row else None
 
 
 def _save_image_file(base64_data: str) -> str:
@@ -103,6 +167,7 @@ async def save_image(
     quality: Optional[str],
     n: int,
     image_results: List[dict],
+    task_id: Optional[str] = None,
 ) -> List[dict]:
     """
     Save successful generation results to gallery.
@@ -138,6 +203,8 @@ async def save_image(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (record_id, now, model, sub_model, prompt, size, quality, n, url, fname),
         )
+        if task_id:
+            conn.execute("INSERT INTO image_tasks VALUES (?, ?)", (record_id, task_id))
         records.append({
             "id": record_id,
             "created_at": now,
@@ -155,13 +222,18 @@ async def save_image(
     return records
 
 
-def get_images(limit: int = 50, offset: int = 0) -> List[dict]:
+def count_images(keyword: str = "") -> int:
+    query = "%" + keyword + "%"
+    return _get_conn().execute("SELECT COUNT(*) FROM images WHERE prompt LIKE ? OR sub_model LIKE ?", (query, query)).fetchone()[0]
+
+
+def get_images(limit: int = 50, offset: int = 0, keyword: str = "") -> List[dict]:
     """Return most recent images (newest first). Includes thumb_filename if available."""
     conn = _get_conn()
     rows = conn.execute(
         """SELECT id, created_at, model, sub_model, prompt, size, quality, n, image_url, filename
-           FROM images ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-        (limit, offset),
+           FROM images WHERE prompt LIKE ? OR sub_model LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+        ("%" + keyword + "%", "%" + keyword + "%", limit, offset),
     ).fetchall()
     result = []
     for r in rows:
@@ -238,4 +310,6 @@ def delete_batch(record_ids: List[str]) -> int:
 
 def _row_to_dict(row) -> dict:
     keys = ["id", "created_at", "model", "sub_model", "prompt", "size", "quality", "n", "image_url", "filename"]
-    return dict(zip(keys, row))
+    result = dict(zip(keys, row))
+    result["inputs"] = _record_inputs(result["id"])
+    return result
