@@ -33,11 +33,8 @@ def configuration():
         ],
         "storage": "browser",
         "offline_validation": settings.infinite_offline_validation is True,
-        "provider_models": [
-            {"name": "gpt-4.1-mini", "capability": "text"},
-            {"name": "gpt-4o-mini", "capability": "text"},
-            {"name": "tts-1", "capability": "audio"},
-        ] if settings.openai_api_key else [],
+        # Image-provider credentials do not establish text/audio model availability.
+        "provider_models": [],
     }
 
 
