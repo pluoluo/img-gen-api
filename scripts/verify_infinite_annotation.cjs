@@ -136,6 +136,7 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
     await page.getByRole('button', { name: '取消标注', exact: true }).click();
     assert.equal((await project(page)).nodes.length, after.nodes.length);
     await page.setViewportSize({ width: 1600, height: 1000 });
+    const projectUrl = page.url();
     await page.goto(origin + '/');
     await page.getByRole('tab', { name: '画布工作区 · 预览' }).click();
     const embedded = page.frameLocator('iframe[title="画布工作区"]');
@@ -153,7 +154,54 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
     await page.waitForFunction(() => document.querySelector('iframe[title="画布工作区"]').style.position !== 'fixed');
     assert.equal((await project(page)).nodes.length, after.nodes.length);
     assert.deepEqual(errors, []); assert.deepEqual(posts, []);
-    const result = { toolbarMigration: true, fullscreen: true, penRectangleEraserText: true, undoRedo: true, saveIncludesActiveText: true, originalPreserved: true, originalResolution: true, erasePreservesSource: true, cancelHasNoChanges: true, refreshPersists: true, backgroundShortcutsBlocked: true, mobileFits: true, embeddedFullscreenRestores: true, postRequests: posts, browserErrors: errors };
+    await page.goto(projectUrl);
+    const annotationPanel = () => page.locator(`[data-node-panel="${annotated.id}"]`);
+    const selectAnnotated = async () => { await page.locator(`[data-node-id="${annotated.id}"]`).click(); await annotationPanel().getByLabel('当前图片', { exact: true }).waitFor(); };
+    await selectAnnotated();
+    const shownRefs = await annotationPanel().locator('[data-reference-node-id]').evaluateAll(items => items.map(item => item.dataset.referenceNodeId));
+    assert.deepEqual(shownRefs, [annotated.id, 'fixture-image']);
+    assert.equal(await annotationPanel().getByLabel('当前图片', { exact: true }).getByRole('button').count(), 0);
+    await page.screenshot({ path: output + '/annotation-reference.png', animations: 'disabled' });
+    const encoded = await page.evaluate(key => new Promise(resolve => {
+      const r = indexedDB.open('infinite-canvas');
+      r.onsuccess = () => {
+        const db = r.result; const tx = db.transaction('image_files'); const q = tx.objectStore('image_files').get(key);
+        q.onsuccess = () => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(q.result); };
+        tx.oncomplete = () => db.close();
+      };
+    }), annotated.metadata.storageKey);
+    const submissions = [];
+    const returnedImage = fs.readFileSync(output + '/fixture.png').toString('base64');
+    await page.route('**/api/v1/infinite/generate', async route => {
+      submissions.push(route.request().postDataJSON());
+      await route.fulfill({ json: { task_id: 'annotation-reference-' + submissions.length } });
+    });
+    await page.route('**/api/v1/tasks/annotation-reference-*', route => route.fulfill({ json: { status: 'completed', images: [{ base64: returnedImage }] } }));
+    for (const behavior of ['new-node', 'overwrite']) {
+      await page.evaluate(behavior => {
+        const key = 'infinite-canvas:ai_config_store'; const value = JSON.parse(localStorage.getItem(key));
+        value.state.config.nodeRegenerateBehavior = behavior; value.state.config.canvasImageCount = '1'; value.state.config.count = '1'; localStorage.setItem(key, JSON.stringify(value));
+      }, behavior);
+      await page.reload(); await selectAnnotated();
+      await annotationPanel().getByRole('textbox').fill('按照标注修改，保留其余结构');
+      const completed = page.waitForResponse(response => response.url().includes('/api/v1/tasks/annotation-reference-'));
+      await annotationPanel().getByRole('button', { name: '生成', exact: true }).click();
+      await completed;
+      const sent = submissions[submissions.length - 1];
+      assert.equal(sent.image_base64s.length, 2);
+      assert.equal(sent.image_base64s[0], encoded, behavior + ' must submit the annotated PNG first');
+      assert.notEqual(sent.image_base64s[1], encoded);
+      for (let i = 0; i < 80; i++) {
+        const saved = await project(page);
+        if (behavior === 'new-node' ? saved.nodes.length === after.nodes.length + 1 && saved.nodes.every(n => n.metadata?.status !== 'loading') : saved.nodes.find(n => n.id === annotated.id)?.metadata.storageKey !== annotated.metadata.storageKey) break;
+        await page.waitForTimeout(100);
+      }
+    }
+    assert.equal(submissions.length, 2);
+    assert.equal(posts.length, 2);
+    assert.ok(posts.every(url => url.endsWith('/api/v1/infinite/generate')));
+    assert.deepEqual(errors, []);
+    const result = { toolbarMigration: true, fullscreen: true, penRectangleEraserText: true, undoRedo: true, saveIncludesActiveText: true, originalPreserved: true, originalResolution: true, erasePreservesSource: true, cancelHasNoChanges: true, refreshPersists: true, backgroundShortcutsBlocked: true, mobileFits: true, embeddedFullscreenRestores: true, currentImageShownFirst: true, annotatedPngSubmittedInNewAndOverwriteModes: true, mockedGenerations: 2, postRequests: posts, browserErrors: errors };
     fs.writeFileSync(output + '/annotation-result.json', JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
