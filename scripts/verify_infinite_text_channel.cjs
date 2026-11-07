@@ -6,7 +6,12 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const origin = process.env.INFINITE_TEST_URL || 'http://127.0.0.1:8770';
 const output = 'data/infinite-validation';
-const generatedPrompt = '一幅古典油画风格的花卉静物，盛开的花朵与绿叶构成画面主体，花瓣呈现层叠的厚涂笔触，暖色背景简洁柔和，左上方自然光照亮花瓣，色彩浓郁，明暗过渡细腻，不添加文字或水印。';
+const generatedPrompt = [
+  '主体与场景：\n一幅古典油画风格的花卉静物，盛开的花朵与绿叶构成画面主体。',
+  '构图与视角：\n花朵疏密有致，主体集中于画面中央，背景简洁，留出适当呼吸空间。',
+  '风格与光影：\n花瓣呈现层叠的厚涂笔触，暖色背景柔和，左上方自然光照亮花瓣，色彩浓郁，明暗过渡细腻。',
+  '细节与约束：\n保留花卉的自然形态，不添加文字或水印。',
+].join('\n\n');
 async function project(page) {
   return page.evaluate(() => new Promise(resolve => {
     const r = indexedDB.open('infinite-canvas');
@@ -72,8 +77,11 @@ with zipfile.ZipFile('data/infinite-validation/text-channel.zip','w') as z:z.wri
     assert.equal(submissions.length, 1); assert.equal(submissions[0].url, origin + '/api/v1/infinite/mimo/token-plan-cn/v1/chat/completions'); assert.equal(submissions[0].body.model, 'mimo-v2.6-pro'); assert.ok(submissions[0].body.messages.some(message => JSON.stringify(message).includes('画一幅油画风格的花卉'))); assert.equal(submissions[0].body.input, undefined);
     const systemMessage = submissions[0].body.messages.find(message => message.role === 'system').content;
     assert.ok(systemMessage.startsWith('保留用户品牌的原始文案。'));
-    for (const rule of ['GPT Image 2.5', '只输出最终提示词正文', '逐字引用', '沿用已有编号', '只修改什么', '<image_gen>']) assert.ok(systemMessage.includes(rule), rule);
+    for (const rule of ['GPT Image 2.5', '只输出最终提示词正文', '标题独占一行', '段落之间空一行', '主体与场景：', '修改内容：', '保留内容：', '逐字引用', '沿用已有编号', '只修改什么', '<image_gen>']) assert.ok(systemMessage.includes(rule), rule);
     await page.reload(); await page.locator('[data-node-id="text-test"]').getByText(generatedPrompt, { exact: true }).waitFor();
+    const displayed = await page.locator('[data-node-id="text-test"]').getByText(generatedPrompt, { exact: true }).evaluate(el => ({ text: el.textContent, whiteSpace: getComputedStyle(el).whiteSpace }));
+    assert.equal(displayed.text, generatedPrompt); assert.equal(displayed.whiteSpace, 'pre-wrap');
+
     await page.locator('[data-node-id="image-test"]').click();
     const imagePanel = page.locator('[data-node-panel="image-test"]');
     await imagePanel.getByRole('button', { name: '生成', exact: true }).click();
@@ -103,7 +111,7 @@ with zipfile.ZipFile('data/infinite-validation/text-channel.zip','w') as z:z.wri
     await page.screenshot({ path: output + '/text-channel-error.png', animations: 'disabled' });
     assert.equal(submissions.length, 3);
     assert.deepEqual(otherPosts, []); assert.deepEqual(errors, []);
-    const result = { imagePromptContractOnChatAndResponses: true, customSystemPromptPreserved: true, generatedPromptFeedsImageNode: true, promptRoleNotLeakedIntoImageRequest: true, mockedImageRequests: imageSubmissions.length, mimoAutoChat: true, sameOriginRelay: true, bypassesUnreachableLocalProxy: true, nodeRetainsProviderError: true, baseUrlV1Preserved: true, streamingResultOnNode: true, resultSurvivesReload: true, explicitResponsesPersists: true, responsesStillWorks: true, userAudioAndTextPreserved: true, imageRoutingPreserved: true, mockedRequests: submissions.map(s => s.url), otherPostRequests: otherPosts, browserErrors: errors };
+    const result = { structuredPromptParagraphs: true, paragraphBreaksDisplayedAndPassedToImage: true, imagePromptContractOnChatAndResponses: true, customSystemPromptPreserved: true, generatedPromptFeedsImageNode: true, promptRoleNotLeakedIntoImageRequest: true, mockedImageRequests: imageSubmissions.length, mimoAutoChat: true, sameOriginRelay: true, bypassesUnreachableLocalProxy: true, nodeRetainsProviderError: true, baseUrlV1Preserved: true, streamingResultOnNode: true, resultSurvivesReload: true, explicitResponsesPersists: true, responsesStillWorks: true, userAudioAndTextPreserved: true, imageRoutingPreserved: true, mockedRequests: submissions.map(s => s.url), otherPostRequests: otherPosts, browserErrors: errors };
     fs.writeFileSync(output + '/text-channel-result.json', JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });
