@@ -207,3 +207,12 @@
 - 新工具入口兼容旧自定义工具栏，不恢复用户已隐藏的标注入口；重新保存设置后可自行隐藏对比入口。新增 3 项相关配置测试，前端合计 31 项、类型检查和构建通过。
 - `scripts/verify_infinite_comparison.cjs` 在离线隔离服务通过：旧设置补入口、有效/无效/自身选图、取消、左右拖动、左右两侧截图像素、键盘边界和步进、交换、Esc/关闭、不同宽高比、手机布局、真实 CDP 触摸拖动、嵌入全屏恢复、节点和连线保持。无 POST 请求、无脚本错误；跨页面重建的临时 blob URL 在断言时规范化，存储键和其他图数据保持一致。
 - 产物 comparison-result.json、comparison-desktop.png、comparison-mobile.png、comparison-pixels.png 位于 data/infinite-validation/；已检查桌面与手机截图，机械检测零发现。仅实现本次授权功能，整体接入目标继续暂停，待用户审查。
+
+## 用户已添加文本/音频渠道：小米 MiMo 文本兼容修复
+
+- 用户新增了文本和音频渠道，并报告文本失败，提供基础地址 `https://token-plan-cn.xiaomimimo.com/v1`。新配置属于浏览器本地显式渠道，应保留，不能继续假定用户未配置文本/音频。
+- 官方快速接入和 Codex 配置文档确认基础地址正确，Chat Completions 与 Responses 均受支持。本机通过不携带任何密钥的 OPTIONS 诊断发现：带 Origin/authorization/content-type 预检时 `/responses` 返回 403，而 `/chat/completions` 返回 200，允许 Origin `*`、POST 和请求头。这是浏览器调用的具体兼容差异，不能断言小米没有 Responses 接口，也不能代替用户账号的实际报错和权限验证。
+- 自动模式识别真实 `.xiaomimimo.com` 域名，文本走 Chat Completions；其他渠道保留原 Responses 默认。渠道编辑新增文本接口选择（自动/Chat Completions/Responses），显式选择持久化并优先；自定义调用脚本不被覆盖。基础地址只到 /v1，程序自动补齐路径且不重复 /v1。不新增后台代理、重试或渠道切换。
+- Chat 请求发送 model/messages/stream，保留系统提示词和多模态消息；支持碎片化 UTF-8、CRLF SSE、正文增量、JSON 返回、供应商错误、取消；不把 reasoning_content 当成正文。MiMo 按官方 thinking 默认行为，不发送其未文档化的 reasoning_effort。
+- 38 项前端测试、类型检查和构建通过。`scripts/verify_infinite_text_channel.cjs` 在离线测试服务中使用占位密钥与全拦截的两次模型请求：自动 Chat 的中文回填与刷新、显式 Responses 的设置保存/刷新和生成、用户文本/音频配置保留、本机图片模型保留均通过；无其他 POST 或脚本错误。未调用真实模型，未验证用户真实 API Key/模型权限，音频生成不在本次验收范围。
+- 证据：data/infinite-validation/text-channel-result.json、text-channel-desktop.png、text-channel-mobile.png；已检查截图，机械检测零发现。官方资料：https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access 、https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration 。仅处理本次文本故障，整体接入目标继续暂停。
