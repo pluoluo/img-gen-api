@@ -44,7 +44,7 @@ class GptRouteTests(unittest.TestCase):
         p, _ = self.gr.resolve_gpt_route("2272x752", "gpt-image-2.5-flare")
         self.assertEqual(p, "packy")
         p, _ = self.gr.resolve_gpt_route("1920x1080", "gpt-image-2.5-flare")
-        self.assertEqual(p, "openai")
+        self.assertEqual(p, "packy")
 
     def test_openai_first_ignores_size(self):
         self._openai_first()
@@ -53,14 +53,16 @@ class GptRouteTests(unittest.TestCase):
         p, sub = self.gr.resolve_gpt_route("1024x1024", "gpt-image-2.5-flare")
         self.assertEqual((p, sub), ("openai", "gpt-image-2.5-flare"))
 
-    def test_size_split_uses_1920_boundary(self):
+    def test_size_split_uses_total_pixel_boundary(self):
         self.gr.save_state({
             "mode": self.gr.MODE_SIZE_SPLIT,
             "undersize_streak": 5,
             "reverted_at": "x",
         })
-        p, sub = self.gr.resolve_gpt_route("1920x1080", "gpt-image-2.5-flare")
+        p, sub = self.gr.resolve_gpt_route("2048x768", "gpt-image-2.5-flare")
         self.assertEqual(p, "openai")
+        p, sub = self.gr.resolve_gpt_route("2048x784", "gpt-image-2.5-flare")
+        self.assertEqual(p, "packy")
         p, sub = self.gr.resolve_gpt_route("2560x1440", "gpt-image-2.5-flare")
         self.assertEqual(p, "packy")
 
@@ -109,6 +111,43 @@ class GptRouteTests(unittest.TestCase):
         )
         self.assertEqual(st["undersize_streak"], 1)
         self.assertEqual(st["mode"], self.gr.MODE_OPENAI_FIRST)
+
+    def test_wide_images_below_budget_and_square_images_above_budget(self):
+        for size in ("2160x720", "720x2160", "1920x816", "1248x1248", "1536x1024"):
+            with self.subTest(size=size):
+                self.assertEqual(self.gr.resolve_gpt_route(size, "gpt-image-2.5-flare")[0], "openai")
+        for size in ("1536x1536", "1920x1080", "2016x864"):
+            with self.subTest(size=size):
+                self.assertEqual(self.gr.resolve_gpt_route(size, "gpt-image-2.5-flare")[0], "packy")
+
+    def test_wide_1k_request_does_not_count_as_large_output_miss(self):
+        self._openai_first()
+        state = self.gr.note_openai_output("2160x720", [{"base64": _png_b64(800, 600)}], sub_model="gpt-image-2.5-flare")
+        self.assertEqual(state["undersize_streak"], 0)
+
+    def test_adequate_square_output_resets_streak_despite_short_long_edge(self):
+        self._openai_first()
+        self.gr.note_openai_output("2560x1440", [{"base64": _png_b64(800, 600)}], sub_model="gpt-image-2.5-flare")
+        state = self.gr.note_openai_output("2560x1440", [{"base64": _png_b64(1600, 1600)}], sub_model="gpt-image-2.5-flare")
+        self.assertEqual(state["undersize_streak"], 0)
+
+    def test_legacy_1k_presets_fill_budget_and_stay_on_openai(self):
+        import json
+        from pathlib import Path
+        config = json.loads((Path(__file__).resolve().parents[1] / "frontend/model-config.json").read_text())
+        for row in config["SIZES"]:
+            dimensions = row["d"].get("1K")
+            if not dimensions:
+                continue
+            width, height = dimensions
+            self.assertLessEqual(width * height, self.gr._1K_MAX_PIXELS)
+            self.assertGreaterEqual(width * height, self.gr._1K_MAX_PIXELS * 0.99)
+            self.assertEqual(width % 16 + height % 16, 0)
+            self.assertEqual(self.gr.resolve_gpt_route(f"{width}x{height}", "gpt-image-2.5-flare")[0], "openai")
+
+    def test_auto_uses_reference_total_pixels(self):
+        self.assertEqual(self.gr.resolve_gpt_route("auto", "gpt-image-2.5-flare", _png_b64(2048, 768))[0], "openai")
+        self.assertEqual(self.gr.resolve_gpt_route("auto", "gpt-image-2.5-flare", _png_b64(1536, 1536))[0], "packy")
 
     def test_hint_follows_mode(self):
         st = self.gr.route_status()

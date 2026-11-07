@@ -1,7 +1,7 @@
 """GPT 2.5 flare/sunburst routing + openai-hk undersize monitor.
 
 Default mode (size_split):
-  long edge ≤ 1920 → openai-hk; larger → packy.
+  total pixels ≤ 1,572,864 → openai-hk; larger → packy.
   openai-hk 4K is a false 1.57MP cap (confirmed 2026-09-23).
 
 Optional mode (openai_first): openai-hk first, Packy on API failure.
@@ -25,7 +25,7 @@ from image_api.services.log_helper import log_info, log_warn
 
 CST = timezone(timedelta(hours=8))
 
-_1K_MAX_LONG_EDGE = 1920
+_1K_MAX_PIXELS = 1536 * 1024
 # openai-hk 实测上限约 1.57MP；超宽图长边仍可能 >1920，所以不能只看长边。
 _UNDERSUZE_MAX_PIXELS = 1_700_000
 UNDERSUZE_STREAK_LIMIT = 5
@@ -156,7 +156,7 @@ def resolve_gpt_route(size: str, sub_model: str,
     mode = current_mode()
     use_openai = True
     if mode == MODE_SIZE_SPLIT:
-        use_openai = max(w, h) <= _1K_MAX_LONG_EDGE
+        use_openai = w * h <= _1K_MAX_PIXELS
     provider = "openai" if use_openai else "packy"
     sub = normalize_sub(sub_model, for_packy=not use_openai)
     log_info(f"GPT 自动路由: {w}x{h} mode={mode} → {provider}/{sub}")
@@ -175,7 +175,7 @@ def note_openai_output(size: str, result: list,
         return load_state()
 
     req_w, req_h = estimate_output_wh(size, image_base64)
-    if max(req_w, req_h) <= _1K_MAX_LONG_EDGE:
+    if req_w * req_h <= _1K_MAX_PIXELS:
         return load_state()
 
     got = None
@@ -191,10 +191,7 @@ def note_openai_output(size: str, result: list,
 
     got_w, got_h = got
     got_px = got_w * got_h
-    undersize = (
-        max(got_w, got_h) <= _1K_MAX_LONG_EDGE
-        or got_px <= _UNDERSUZE_MAX_PIXELS
-    )
+    undersize = got_px <= _UNDERSUZE_MAX_PIXELS
 
     with _lock:
         state = load_state()
@@ -235,12 +232,13 @@ def route_status() -> dict:
     mode = state["mode"]
     return {
         "mode": mode,
+        "one_k_max_pixels": _1K_MAX_PIXELS,
         "undersize_streak": state.get("undersize_streak") or 0,
         "streak_limit": UNDERSUZE_STREAK_LIMIT,
         "reverted_at": state.get("reverted_at"),
         "hint": HINT_SIZE_SPLIT if mode == MODE_SIZE_SPLIT else HINT_OPENAI_FIRST,
         "rule": (
-            "1K（长边≤1920）→ openai-hk；以上 → packy"
+            "1K（总像素≤1,572,864）→ openai-hk；以上 → packy"
             if mode == MODE_SIZE_SPLIT
             else "flare/sunburst 优先 openai-hk，失败再 packy"
         ),

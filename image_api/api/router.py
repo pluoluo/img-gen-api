@@ -210,7 +210,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         elif request.image_base64:
             first_b64 = request.image_base64
 
-        # GPT 自动路由：默认 openai-hk 优先；监测触发后回切 1K→openai-hk / 以上→packy。
+        # GPT 自动路由：默认按请求总像素分流；可选 openai_first 保留输出不足监测。
         # 显式 openai/packy 仍可强制指定。
         if request.model == "auto":
             provider, sub = resolve_gpt_route(request.size, request.sub_model, first_b64)
