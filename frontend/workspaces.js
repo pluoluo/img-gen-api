@@ -5,6 +5,22 @@
   let frame;
   let ready = false;
   const pending = [];
+  let editorFullscreen = false;
+  let previousFrameStyle = '';
+  let previousOverflow = '';
+  function setEditorFullscreen(active) {
+    if (!frame || active === editorFullscreen) return;
+    editorFullscreen = active;
+    if (active) {
+      previousFrameStyle = frame.getAttribute('style') || '';
+      previousOverflow = document.body.style.overflow;
+      frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100dvh;z-index:10000;border:0;border-radius:0';
+      document.body.style.overflow = 'hidden';
+    } else {
+      frame.setAttribute('style', previousFrameStyle);
+      document.body.style.overflow = previousOverflow;
+    }
+  }
   function select(name) {
     const active = name === 'canvas';
     legacy.hidden = active;
@@ -17,6 +33,7 @@
     if (active && !frame) {
       frame = document.createElement('iframe');
       frame.title = '画布工作区';
+      frame.addEventListener('load', () => setEditorFullscreen(false));
       frame.src = '/infinite/canvas' + (window.__INFINITE_REVISION__ ? '?v=' + encodeURIComponent(window.__INFINITE_REVISION__) : '');
       frame.addEventListener('error', () => { document.getElementById('canvasLoading').textContent = '画布加载失败，请刷新重试。'; });
       canvas.appendChild(frame);
@@ -39,6 +56,7 @@
   };
   window.addEventListener('message', event => {
     if (event.origin !== location.origin || event.source !== frame?.contentWindow) return;
+    if (event.data?.type === 'canvas-editor-fullscreen' && typeof event.data.active === 'boolean') setEditorFullscreen(event.data.active);
     if (event.data?.type === 'canvas-legacy') select('legacy');
     if (event.data?.type === 'canvas-ready') {
       ready = true;
