@@ -129,11 +129,20 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
         from image_api.main import InfiniteStaticFiles
         with tempfile.TemporaryDirectory() as folder:
             Path(folder, "index.html").write_text("infinite-test")
+            Path(folder, "build-info.json").write_text('{"revision":"test"}')
+            Path(folder, "config.js").write_text("window.CONFIG = {}")
             mounted = FastAPI()
             mounted.mount("/infinite", InfiniteStaticFiles(directory=folder, html=True))
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mounted), base_url="http://test") as client:
                 for path in ["/infinite/", "/infinite/canvas/project-id", "/infinite/config"]:
-                    self.assertEqual((await client.get(path)).text, "infinite-test")
+                    response = await client.get(path)
+                    self.assertEqual(response.text, "infinite-test")
+                    self.assertEqual(response.headers["cache-control"], "no-store")
+                    cached = await client.get(path, headers={"If-None-Match": response.headers["etag"]})
+                    self.assertEqual(cached.status_code, 304)
+                    self.assertEqual(cached.headers["cache-control"], "no-store")
+                for path in ["/infinite/build-info.json", "/infinite/config.js"]:
+                    self.assertEqual((await client.get(path)).headers["cache-control"], "no-store")
                 self.assertEqual((await client.get("/infinite/assets/missing.js")).status_code, 404)
 
     async def test_sync_files_roundtrip_and_path_isolation(self):

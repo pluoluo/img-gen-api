@@ -17,7 +17,7 @@
     if (active && !frame) {
       frame = document.createElement('iframe');
       frame.title = '画布工作区';
-      frame.src = '/infinite/canvas';
+      frame.src = '/infinite/canvas' + (window.__INFINITE_REVISION__ ? '?v=' + encodeURIComponent(window.__INFINITE_REVISION__) : '');
       frame.addEventListener('error', () => { document.getElementById('canvasLoading').textContent = '画布加载失败，请刷新重试。'; });
       canvas.appendChild(frame);
     }

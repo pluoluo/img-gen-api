@@ -217,7 +217,7 @@ FastAPI + Uvicorn、httpx、Pillow、python-multipart、pydantic-settings。
 venv/bin/python scripts/build_infinite.py --source /home/sahn/infinite-canvas
 ```
 
-构建检查通过后静态资源以原子链接方式发布到 `frontend/infinite`。FastAPI 需要重启一次以加载新增后端路由；之后纯前端构建无需重启。首页 `/` 默认打开原生成界面，`/legacy` 也保留同一入口；Infinite 供审查使用，独立入口为 `/infinite/canvas`，旧 Konva 工作区保留在 `/canvas/`。只有用户明确审查通过并同意后，才可切换默认首页。
+构建检查通过后静态资源以原子链接方式发布到 `frontend/infinite`。FastAPI 需要重启一次以加载新增后端路由；之后纯前端构建无需重启。入口 HTML、构建信息和运行配置禁止缓存；旧版内嵌 Infinite 的地址及工作区脚本带构建提交号，避免更新后仍加载旧入口。首页 `/` 默认打开原生成界面，`/legacy` 也保留同一入口；Infinite 供审查使用，独立入口为 `/infinite/canvas`，旧 Konva 工作区保留在 `/canvas/`。只有用户明确审查通过并同意后，才可切换默认首页。
 
 Infinite 自动加载本服务的图片模型并调用原异步任务接口；GPT 图片请求继续使用已有 openai-hk/Packy 双来源自动路由，浏览器只显示一个「本机生图服务」，无需填写默认渠道或复制供应商密钥。当前没有配置文本、音频或视频服务，不会自动注册这些模型和渠道；如需使用，应自行配置具备对应权限的渠道。取消前端查询不会取消已提交的付费上游任务。
 

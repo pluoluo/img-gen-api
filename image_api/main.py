@@ -49,11 +49,14 @@ class InfiniteStaticFiles(StaticFiles):
 
     async def get_response(self, path, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404 or "." in os.path.basename(path):
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+        if response.headers.get("content-type", "").startswith("text/html") or not os.path.splitext(os.path.basename(path))[1] or path.endswith(".html") or os.path.basename(path) in ("build-info.json", "config.js"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 app.mount("/infinite", InfiniteStaticFiles(directory=_INFINITE_FRONTEND, html=True, check_dir=False), name="infinite")
@@ -88,12 +91,18 @@ def legacy_page():
         html = f.read()
     with open(os.path.join(_FRONTEND, "model-config.json"), encoding="utf-8") as config:
         html = html.replace("__MODEL_CONFIG_JSON__", json.dumps(json.load(config), ensure_ascii=False))
+    try:
+        with open(os.path.join(_INFINITE_FRONTEND, "build-info.json"), encoding="utf-8") as info:
+            revision = json.load(info)["revision"]
+    except (OSError, ValueError, KeyError):
+        revision = "development"
+    html = html.replace("__INFINITE_REVISION__", revision)
     # Inject prompt_portal_url from config so frontend doesn't need a hardcoded port
     html = html.replace(
         '<script>',
-        f'<script>\nwindow.__PROMPT_PORTAL_URL__ = "{settings.prompt_portal_url}";'
+        f'<script>\nwindow.__INFINITE_REVISION__ = {json.dumps(revision)};\nwindow.__PROMPT_PORTAL_URL__ = "{settings.prompt_portal_url}";'
     )
-    return html
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/gallery", response_class=HTMLResponse)
