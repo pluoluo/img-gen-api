@@ -216,3 +216,13 @@
 - Chat 请求发送 model/messages/stream，保留系统提示词和多模态消息；支持碎片化 UTF-8、CRLF SSE、正文增量、JSON 返回、供应商错误、取消；不把 reasoning_content 当成正文。MiMo 按官方 thinking 默认行为，不发送其未文档化的 reasoning_effort。
 - 38 项前端测试、类型检查和构建通过。`scripts/verify_infinite_text_channel.cjs` 在离线测试服务中使用占位密钥与全拦截的两次模型请求：自动 Chat 的中文回填与刷新、显式 Responses 的设置保存/刷新和生成、用户文本/音频配置保留、本机图片模型保留均通过；无其他 POST 或脚本错误。未调用真实模型，未验证用户真实 API Key/模型权限，音频生成不在本次验收范围。
 - 证据：data/infinite-validation/text-channel-result.json、text-channel-desktop.png、text-channel-mobile.png；已检查截图，机械检测零发现。官方资料：https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access 、https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration 。仅处理本次文本故障，整体接入目标继续暂停。
+
+## 用户继续报告 Failed to fetch：补齐小米同源转发
+
+- 上一轮只修正文本接口与解析，浏览器仍直连外部供应商，模拟成功不能当作用户真实调用已通。用户进一步给出 Failed to fetch，属于浏览器未读到有效响应；不能据此断言密钥或模型无效。
+- image-api 构建的官方小米文本/模型列表请求自动走同源 `/api/v1/infinite/mimo/{cluster}/v1/...`，先于全局 localhost 本地代理处理；独立构建保持原直连。覆盖官方 api、Token Plan cn/sgp/ams 固定目标，只允许 GET models、POST chat/completions 或 responses，不接受任意主机/路径、不跟随重定向。不修改渠道基础地址、凭据和模型选择。
+- 服务端沿用流式转发和关闭清理，只使用当前请求的 Bearer 凭据，既不取图片渠道密钥，也不落库，不转发 Cookie/其他敏感头；返回供应商状态与正文，禁缓存/代理缓冲。离线验收继续禁止供应商 POST，不新增超时/重试/并发限制。
+- 修复文本节点最终状态覆盖原报错为通用「生成失败」的问题；无成功结果时保留首条具体失败原因。Chat 与 Responses 均识别服务端 detail 错误，方便区分网络、权限、模型问题。
+- 验证：16 项后端相关测试（包含原固定供应商转发）通过；41 项前端测试、类型检查和构建通过。text-channel 浏览器扩展验收开启不可达 localhost:23210 代理，Chat/Responses 都只向本站路径发请求、正文回填和刷新保留；第三次模拟 403 的原报错可直接显示在节点，用户渠道/模型保留，无其他 POST 或脚本错误。
+- 实际网络诊断：本机直接对小米 Chat 做无凭据 OPTIONS 返回 200；通过测试服务同源转发用明确无效的诊断凭据 GET models，收到小米 401 Invalid API Key。只验证网络可读，不是对用户真实密钥的测试，未执行真实生成。不能声称真实账号权限已验。
+- 证据更新 text-channel-result.json、text-channel-error.png，位于 data/infinite-validation/。整体接入目标继续暂停，只修复本次网络故障。
