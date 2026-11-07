@@ -226,3 +226,13 @@
 - 验证：16 项后端相关测试（包含原固定供应商转发）通过；41 项前端测试、类型检查和构建通过。text-channel 浏览器扩展验收开启不可达 localhost:23210 代理，Chat/Responses 都只向本站路径发请求、正文回填和刷新保留；第三次模拟 403 的原报错可直接显示在节点，用户渠道/模型保留，无其他 POST 或脚本错误。
 - 实际网络诊断：本机直接对小米 Chat 做无凭据 OPTIONS 返回 200；通过测试服务同源转发用明确无效的诊断凭据 GET models，收到小米 401 Invalid API Key。只验证网络可读，不是对用户真实密钥的测试，未执行真实生成。不能声称真实账号权限已验。
 - 证据更新 text-channel-result.json、text-channel-error.png，位于 data/infinite-validation/。整体接入目标继续暂停，只修复本次网络故障。
+
+## 用户确认文本接入成功：按 GPT Image 2.5 指南约束提示词
+
+- 用户确认 AI 接入已成功，但输出是聊天说明、image_gen 包装和总结清单，不能直接连给图片节点；随后要求依据 GPT Image 2.5 官方生图指南优化。
+- 使用 OpenAI Docs 技能检索并实际读取官方 image-prompting 的 GPT Image 2.5 章节与 Cookbook，确认 gpt-image-2.5-flare/sunburst 均有官方文档；保留现有模型与 API 参数，不切换到 2.6，不新增尺寸/质量边界。
+- 新增 canvas-image-prompt.ts 系统约束，在 buildGenerationConfig 的 text 模式追加，保留用户原自定义规则；新建、改写和重试共用。image/audio/video 配置仍使用原自定义系统提示词，普通插件/Agent 直接文本调用不在本次注入范围。
+- 输出只保留最终画面指令，不开场、不解释、不总结、不伪造生图工具/标签。按主体/用途/构图/可见细节描述；画面文案逐字引用，保留品牌与标点；参考图沿已有编号分工；局部编辑明确变化与保留项、移除非成品标记；不宣称提示词可保证像素不变。优先用户明确要求，避免泛化画质堆词；复杂任务可用短段，不限定字数。API 模型/质量/尺寸仍由面板控制。
+- 新增两项模式隔离/用户配置保留测试，43 项前端测试、类型检查和构建通过。扩展 text-channel 浏览器验收：Chat/Responses 请求均携带指南约束与用户自定义规则；模拟生成油画花卉正文并刷新保留，沿连线触发一次模拟图片请求，包含正文、不混入系统角色或伪工具标签。原同源转发/接口保存/错误保留回归通过，无其他 POST 或脚本错误。
+- 共三次文本、一次图片请求均被拦截模拟，未调用真实模型；测试证明规则传入和连线传递，不能据此保证第三方模型每次都遵守输出规则。真实质量待用户用原需求重新生成审查。整体目标继续暂停，仅处理当前输出约束。
+- 来源：https://developers.openai.com/api/docs/guides/image-prompting?model=gpt-image-2.5 、https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide 。证据更新 data/infinite-validation/text-channel-result.json。
