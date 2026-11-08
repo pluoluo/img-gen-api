@@ -29,6 +29,7 @@ align-items: center;
 justify-content: space-between;
 padding: 0 20px;
 }
+.topbar[hidden] { display: none; }
 .brand {
 font-size: 1.12rem;
 font-weight: 700;
@@ -601,12 +602,10 @@ border-top: 1px solid #2a2a35;
   <div class="brand">AI Image Generator</div>
   <nav class="top-links" aria-label="顶部导航">
     <div class="workspace-tabs" role="tablist" aria-label="工作区切换">
-      <button id="legacyTab" role="tab" data-workspace="legacy" aria-controls="legacyWorkspace" aria-selected="true">原有界面</button>
-      <button id="canvasTab" role="tab" data-workspace="canvas" aria-controls="canvasWorkspace" aria-selected="false" tabindex="-1">画布工作区 · 预览</button>
+      <button id="legacyTab" role="tab" data-workspace="legacy" aria-controls="legacyWorkspace" aria-selected="true">旧版生成</button>
+      <button id="canvasTab" role="tab" data-workspace="canvas" aria-controls="canvasWorkspace" aria-selected="false" tabindex="-1">画布工作区</button>
     </div>
-    <a id="promptLink" href="#">Prompt</a>
     <a href="/logs">日志</a>
-    <a href="/gallery">图库</a>
   </nav>
 </header>
 
@@ -726,22 +725,6 @@ border-top: 1px solid #2a2a35;
 </div>
 
 <script>
-// Prompt 链接：使用服务端注入的 PROMPT_PORTAL_URL 配置
-// 将 localhost/127.0.0.1 替换为当前访问的 hostname，使其他电脑也能访问
-(function() {
-    var url = window.__PROMPT_PORTAL_URL__ ||
-        (window.location.protocol + '//' + window.location.hostname + ':8769');
-    try {
-        var u = new URL(url);
-        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '0.0.0.0') {
-            u.hostname = window.location.hostname;
-        }
-        document.getElementById('promptLink').href = u.toString();
-    } catch (_) {
-        document.getElementById('promptLink').href = url;
-    }
-})();
-
 const { MODELS, HINTS, MODEL25, SIZE_OVERRIDES, QUALITY_MODELS, SIZES } = __MODEL_CONFIG_JSON__;
 function modelKind(value) {
   const model = MODELS.find(item => item.value === value);

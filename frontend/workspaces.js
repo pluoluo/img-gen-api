@@ -23,6 +23,7 @@
   }
   function select(name) {
     const active = name === 'canvas';
+    document.querySelector('.topbar').hidden = active;
     legacy.hidden = active;
     canvas.hidden = !active;
     tabs.forEach(tab => {

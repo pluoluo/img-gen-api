@@ -1,0 +1,137 @@
+// Unified prompt library acceptance. Requires an isolated offline backend and source snapshot.
+const { chromium } = require('../canvas/node_modules/playwright');
+const { assertOfflineValidation } = require('./infinite_test_environment.cjs');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const origin = process.env.INFINITE_TEST_URL || 'http://127.0.0.1:8772';
+const output = 'data/infinite-validation';
+const translated = '高端木门特写。\n\n保留原始构图、材质、光线及所有精确文案。';
+const personal = '主体：花卉静物。\n\n光线：柔和自然光。';
+const localTitle = '整合验收 · 多段模板';
+const init = () => {
+    if (!localStorage.getItem('infinite-canvas:prompt_source_store_v2')) localStorage.setItem('infinite-canvas:prompt_source_store_v2', JSON.stringify({ state: { schedule: { intervalMinutes: 0 } }, version: 0 }));
+    if (!localStorage.getItem('infinite-canvas:ai_config_store')) localStorage.setItem('infinite-canvas:ai_config_store', JSON.stringify({ state: { config: { textModel: 'translation-fixture::mimo-fixture', channels: [{ id: 'translation-fixture', name: '翻译验收', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', apiKey: 'offline-fixture', apiFormat: 'openai', textApiFormat: 'chat-completions', models: [{ name: 'mimo-fixture', capability: 'text' }] }] } }, version: 0 }));
+};
+async function storedProject(page) {
+    return page.evaluate(() => new Promise(resolve => {
+        const r = indexedDB.open('infinite-canvas');
+        r.onsuccess = () => { const db = r.result, tx = db.transaction('app_state'), q = tx.objectStore('app_state').get('infinite-canvas:canvas_store'); q.onsuccess = () => resolve(JSON.parse(q.result || '{}').state?.projects[0]); tx.oncomplete = () => db.close(); };
+    }));
+}
+(async () => {
+    await assertOfflineValidation(origin);
+    fs.mkdirSync(output, { recursive: true });
+    const browser = await chromium.launch({ headless: true });
+    const errors = [], posts = [];
+    let translationCalls = 0;
+    try {
+        const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] });
+        await context.addInitScript(init);
+        const page = await context.newPage();
+        page.on('pageerror', error => errors.push(error.message));
+        page.on('request', request => { if (request.method() === 'POST') posts.push(request.url()); });
+        await page.route('**/api/v1/infinite/mimo/**', route => {
+            translationCalls++;
+            const body = route.request().postDataJSON();
+            assert.equal(body.model, 'mimo-fixture');
+            assert(body.messages[0].content.includes('忠实翻译'));
+            return route.fulfill({ json: { choices: [{ message: { content: translated }, finish_reason: 'stop' }] } });
+        });
+        await page.goto(origin + '/infinite/prompts');
+        await page.locator('.ant-card').first().waitFor();
+        await page.waitForFunction(() => [...document.querySelectorAll('.ant-card img')].slice(0, 3).every(image => image.complete && image.naturalWidth));
+        const text = await page.locator('body').innerText();
+        assert(text.includes('条匹配'));
+        assert(!text.includes('Unknown'));
+        const filters = page.locator('main aside');
+        assert(!await filters.innerText().then(text => /@|freestylefly|gpt-image/.test(text)));
+        await page.screenshot({ path: output + '/unified-prompts-1440.png', fullPage: true });
+        const search = () => page.getByPlaceholder('搜索主题、中文描述或原文，例如：人像 胶片');
+        await search().fill('烛光 侧室');
+        await page.getByRole('heading', { name: '烛光侧室写实摄影', exact: true }).waitFor();
+        await page.waitForFunction(() => document.querySelectorAll('.ant-card').length === 1);
+        assert.equal(await page.locator('.ant-card').count(), 1);
+        await page.getByRole('heading', { name: '烛光侧室写实摄影', exact: true }).click();
+        let detail = page.getByRole('dialog', { name: '烛光侧室写实摄影', exact: true });
+        const chinese = await detail.locator('pre').textContent();
+        assert(chinese.includes('东亚'));
+        await detail.getByRole('button', { name: '复制中文版本', exact: true }).click();
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), chinese);
+        await detail.getByText('原始提示词', { exact: true }).click();
+        assert((await detail.locator('pre').textContent()).startsWith('A medium-shot'));
+        await detail.locator('summary').click();
+        assert((await detail.innerText()).includes('ToroJushiAi'));
+        await page.screenshot({ path: output + '/unified-prompt-detail.png' });
+        await page.keyboard.press('Escape');
+
+        await search().fill('奢华木门特写');
+        await page.getByRole('heading', { name: '奢华木门特写', exact: true }).click();
+        detail = page.getByRole('dialog', { name: '奢华木门特写', exact: true });
+        await detail.getByRole('button', { name: '生成中文译文', exact: true }).click();
+        await detail.getByRole('button', { name: '复制中文版本', exact: true }).waitFor();
+        assert.equal(await detail.locator('pre').textContent(), translated);
+        assert.equal(translationCalls, 1);
+        await page.keyboard.press('Escape');
+        await page.reload();
+        await search().fill('奢华木门特写');
+        await page.getByRole('heading', { name: '奢华木门特写', exact: true }).click();
+        assert.equal(await page.getByRole('dialog').locator('pre').textContent(), translated);
+        assert.equal(translationCalls, 1);
+        await page.keyboard.press('Escape');
+
+        await page.getByRole('button', { name: '新增本地提示词', exact: true }).click();
+        const editor = page.getByRole('dialog', { name: '新增本地提示词', exact: true });
+        await editor.getByRole('textbox', { name: /标题/ }).fill(localTitle);
+        await editor.getByRole('textbox', { name: /提示词正文/ }).fill(personal);
+        await editor.getByRole('combobox', { name: '标签', exact: true }).fill('自定义检索词');
+        await page.keyboard.press('Enter');
+        await editor.getByRole('button', { name: /保\s*存/ }).click();
+        await editor.waitFor({ state: 'hidden' });
+        await search().fill('自定义检索词');
+        await page.getByRole('heading', { name: localTitle, exact: true }).waitFor();
+        await page.goto(origin + '/infinite/canvas');
+        await page.getByRole('button', { name: '新建画布', exact: true }).first().click();
+        await page.waitForURL('**/infinite/canvas/*');
+        await page.locator('aside').getByRole('button', { name: '提示词库', exact: true }).click();
+        const sidebar = page.locator('[data-canvas-prompt-library]');
+        await sidebar.getByPlaceholder('搜索主题、中文或原文').fill(localTitle);
+        const row = sidebar.locator('[data-prompt-id]').filter({ hasText: localTitle });
+        await row.getByRole('button', { name: '插入原始提示词', exact: true }).click();
+        await page.waitForFunction(expected => new Promise(resolve => { const r = indexedDB.open('infinite-canvas'); r.onsuccess = () => { const db = r.result, tx = db.transaction('app_state'), q = tx.objectStore('app_state').get('infinite-canvas:canvas_store'); q.onsuccess = () => resolve(JSON.parse(q.result || '{}').state?.projects.some(p => p.nodes.some(n => n.type === 'text' && n.metadata?.content === expected))); tx.oncomplete = () => db.close(); }; }), personal);
+        await sidebar.getByPlaceholder('搜索主题、中文或原文').fill('烛光');
+        const remoteRow = sidebar.locator('[data-prompt-id]').filter({ hasText: '烛光侧室写实摄影' });
+        await remoteRow.getByRole('button', { name: '查看详情', exact: true }).click();
+        await page.getByRole('dialog', { name: '烛光侧室写实摄影', exact: true }).getByRole('button', { name: '使用这条提示词', exact: true }).click();
+        await page.waitForTimeout(700);
+        assert((await storedProject(page)).nodes.some(node => node.metadata?.content === chinese));
+        await page.screenshot({ path: output + '/unified-prompts-canvas.png' });
+        await page.goto(origin + '/infinite/image');
+        await page.getByRole('button', { name: '查看提示词库', exact: true }).click();
+        const picker = page.getByRole('dialog', { name: '提示词库', exact: true });
+        await picker.getByPlaceholder('搜索主题、中文描述或原文').fill(localTitle);
+        await picker.getByRole('heading', { name: localTitle, exact: true }).click();
+        await page.getByRole('dialog', { name: localTitle, exact: true }).getByRole('button', { name: '使用这条提示词', exact: true }).click();
+        await picker.waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('textarea').first().inputValue(), personal);
+
+        const mobile = await browser.newContext({ viewport: { width: 390, height: 900 } });
+        await mobile.addInitScript(init);
+        const mobilePage = await mobile.newPage();
+        mobilePage.on('pageerror', error => errors.push(error.message));
+        await mobilePage.goto(origin + '/infinite/prompts');
+        await mobilePage.locator('.ant-card').first().waitFor();
+        await mobilePage.waitForFunction(() => document.querySelector('.ant-card img')?.naturalWidth > 0);
+        assert(await mobilePage.getByRole('button', { name: /筛选用途与风格/ }).getAttribute('aria-expanded') === 'false');
+        assert(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await mobilePage.screenshot({ path: output + '/unified-prompts-390.png', fullPage: true });
+        await mobilePage.getByRole('button', { name: /筛选用途与风格/ }).click();
+        await mobilePage.getByText('产品与电商', { exact: true }).first().click();
+        await mobilePage.waitForTimeout(500);
+        assert.equal(await mobilePage.getByRole('button', { name: /筛选用途与风格/ }).getAttribute('aria-expanded'), 'true');
+        assert.deepEqual(errors, []);
+        assert(posts.every(url => /\/prompt-library\/translations$|\/mimo\//.test(url)), 'No generation or unintended POST request');
+        const result = { unifiedSearch: true, sourceDedup: true, chineseAndOriginalClipboard: true, realLocalImages: true, authorProvenance: true, selectedTextModelTranslation: true, translationCalls, translationPersists: true, personalTags: true, canvasChineseInsertion: true, workbenchSelection: true, mobileFilters: true, browserErrors: errors, postRequests: posts };
+        fs.writeFileSync(output + '/unified-prompts-result.json', JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(result));
+    } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exit(1); });

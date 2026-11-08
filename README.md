@@ -219,7 +219,7 @@ FastAPI + Uvicorn、httpx、Pillow、python-multipart、pydantic-settings。
 venv/bin/python scripts/build_infinite.py --source /home/sahn/infinite-canvas
 ```
 
-构建检查通过后静态资源以原子链接方式发布到 `frontend/infinite`。FastAPI 需要重启一次以加载新增后端路由；之后纯前端构建无需重启。入口 HTML、构建信息和运行配置禁止缓存；旧版内嵌 Infinite 的地址及工作区脚本带构建提交号，避免更新后仍加载旧入口。首页 `/` 默认打开原生成界面，`/legacy` 也保留同一入口；Infinite 供审查使用，独立入口为 `/infinite/canvas`，旧 Konva 工作区保留在 `/canvas/`。只有用户明确审查通过并同意后，才可切换默认首页。
+构建检查通过后静态资源以原子链接方式发布到 `frontend/infinite`。FastAPI 需要重启一次以加载新增后端路由；之后纯前端构建无需重启。入口 HTML、构建信息和运行配置禁止缓存；旧版内嵌 Infinite 的地址及工作区脚本带构建提交号，避免更新后仍加载旧入口。首页 `/` 默认跳转至 Infinite 画布工作区 `/infinite/canvas`，原生成界面保留在 `/legacy`，旧 Konva 工作区保留在 `/canvas/`。画布顶部提供「旧版生成」和「日志」入口，旧图库沿用画布内的「旧图库」入口。
 
 Infinite 自动加载本服务的图片模型并调用原异步任务接口；GPT 图片请求继续使用已有 openai-hk/Packy 双来源自动路由，浏览器只显示一个「本机生图服务」，无需填写默认渠道或复制供应商密钥。当前没有配置文本、音频或视频服务，不会自动注册这些模型和渠道；如需使用，应自行配置具备对应权限的渠道。取消前端查询不会取消已提交的付费上游任务。
 
@@ -235,9 +235,25 @@ Infinite 图片节点和生图工作台会在提交前保存请求标识，刷�
 
 浏览器模拟验收必须使用独立测试服务，设置 `INFINITE_OFFLINE_VALIDATION=1` 并通过 `INFINITE_FRONTEND_DIR` 指向 fork 的 `web/dist`。写入图库的测试还须设置 `GALLERY_DATA_DIR` 指向独立测试目录，默认生产路径仍为 `/vol1/1000/note/memory/AI生成图片/`。测试服务拒绝创建生成任务及供应商 POST；脚本启动前会检查隔离标记，并生成本地 PNG fixture。生产服务不应启用该标记。可运行 `node scripts/verify_infinite_workbench.cjs`、`node scripts/verify_infinite_gallery.cjs` 等脚本查看验收产物，输出位于 `data/infinite-validation/`。
 
+## 统一提示词库
+
+Infinite 的提示词中心、画布侧栏和工作台选择器共用检索与去重。按创作用途分类，公开来源的风格统一为 20 个中文标签；作者、来源和合并出处保留在详情，个人提示词的自定义标签仍可检索。相同正文忽略空白与全半角差异后合并，已有中文版本通过原始正文及 Prompt Portal 的稳定模板 ID 关联；同名但正文不同的内容保留独立记录。中英文版本可切换，复制和插入使用当前明确选择的正文。
+
+本机 Prompt Portal 从相邻仓库 `../prompt/backend` 只读整合 `prompts_data.json`、`data/gallery_data.json`、`data/gallery_translations.json` 和本地案例图；保留的原始模板快照用于核对中英文版本，不修改旧应用的数据或编辑功能。可用 `PROMPT_PORTAL_DATA_DIR` 指定该 backend 目录。七个公开来源通过同源接口读取，下载快照及按需缓存的图片、中文译文存放于 `data/prompt-library`，可用 `PROMPT_LIBRARY_DATA_DIR` 修改；备份时一并保留该目录及原 Prompt 应用数据。
+
+图片优先复用本地文件，其他图片通过目录中登记的图片 ID 获取并缓存；浏览器无需直连图床。来源更新失败保留旧缓存。没有中文版本的条目可按需翻译，优先使用画布当前选中的可用文本模型；未设置时使用原 Prompt 服务。译文按正文保存并复用，保留原文；不批量调用模型，不在请求失败后自动改用另一渠道。当前原 Prompt 服务的 MiniMax 账号实测返回余额不足，需设置可用文本模型或恢复该服务余额。
+
+本次快照将 2,575 条原始收录/中英文版本整合为 1,389 条，1,059 条有中文正文、1,361 条带示例图地址。图床失效仍会显示不可用状态并保留原始出处，不能据此承诺全部远程图片永久有效。
+
+隔离验收：启动启用 `INFINITE_OFFLINE_VALIDATION=1` 的测试服务，另设 `PROMPT_LIBRARY_DATA_DIR` 指向测试目录并复制来源快照，然后运行 `INFINITE_TEST_URL=http://127.0.0.1:8772 node scripts/verify_infinite_prompt_library.cjs`。脚本仅模拟当前文本模型请求，检查去重、图片、中文与原文复制、译文保存、个人标签、画布插入、工作台选择和移动端筛选；不会调用真实生图服务。
+
+在线或本机整合案例的详情中可点击「修改分类与标签」，手动校正用途和标签、添加自定义标签，或恢复自动分类。校正保存在当前浏览器 IndexedDB 的 `prompt_classifications`，独立于来源缓存，来源更新不会覆盖；按去重正文及已知中文版本关联。提示词中心、侧栏及选择器共同使用校正结果，目前不跨浏览器同步。个人新增记录的标签仍通过原有铅笔入口编辑。
+
+独立 Prompt Portal 的 `prompt-portal.service`（8768）与 `prompt-nginx.service`（8769）已停止并禁用开机自启。整合库继续只读使用保留的 `../prompt/backend` 数据和案例图；不要直接删除该目录。旧版生成页的「✨ 优化」仍调用原独立服务，停用后不可用；画布提示词库和当前文本模型功能不依赖该服务。
+
 ## 原 Konva 画布工作区（M0—M3 预览）
 
-首页 `/` 和 `/legacy` 均打开原有生成界面。顶栏右侧、Prompt 左边的「画布工作区 · 预览」加载 Infinite，首次进入才加载资源，切回原界面保留原表单和结果。Infinite 顶栏「旧版生成」在嵌入工作区内切回原表单，在独立访问时返回默认首页。原界面结果的「插入画布」会将图片保存到一个新的 Infinite 画布。旧 Konva `/canvas/` 仅保留已有资源，不再开发。
+首页 `/` 默认进入 Infinite；`/legacy` 保留原有生成界面，其顶栏「画布工作区」加载 Infinite，首次进入才加载资源，隐藏外层顶栏。Infinite 顶栏「旧版生成」在嵌入工作区内切回原表单并恢复顶栏，在独立访问时进入 `/legacy`。原界面结果的「插入画布」会将图片保存到一个新的 Infinite 画布。旧 Konva `/canvas/` 仅保留已有资源，不再开发。
 
 开发／构建（Node 22.12+ 或 24；生产不需要常驻 Node）：
 

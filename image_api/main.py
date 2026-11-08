@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from image_api.api import router as api_router
 from image_api.config import settings
+from image_api.api.prompt_library import router as prompt_library_router
 from image_api.api.canvas import router as canvas_router
 from image_api.api.infinite import router as infinite_router
 from image_api.api.infinite_storage import router as infinite_storage_router
@@ -30,6 +31,7 @@ app.add_middleware(
 
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(canvas_router, prefix="/api/v1")
+app.include_router(prompt_library_router, prefix="/api/v1")
 app.include_router(infinite_router, prefix="/api/v1")
 app.include_router(infinite_storage_router, prefix="/api/v1")
 app.include_router(infinite_provider_router, prefix="/api/v1")
@@ -78,10 +80,9 @@ app.mount("/workspace-assets", StaticFiles(directory=_FRONTEND), name="workspace
 app.mount("/canvas", StaticFiles(directory=os.path.join(_FRONTEND, "canvas"), html=True, check_dir=False), name="canvas")
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", include_in_schema=False)
 def root():
-    # Keep the original UI as the default until the user approves Infinite.
-    return legacy_page()
+    return RedirectResponse("/infinite/canvas", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/legacy", response_class=HTMLResponse)
