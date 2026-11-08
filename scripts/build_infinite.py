@@ -27,6 +27,8 @@ def main():
     subprocess.run(["bun", "run", "typecheck"], cwd=web, check=True)
     env = {**os.environ, "VITE_BASE": "/infinite/", "VITE_IMAGE_API": "1"}
     subprocess.run(["bun", "run", "build", "--outDir", str(release)], cwd=web, env=env, check=True)
+    # Reuse the legacy site's original full-color logo for the integrated app and favicon.
+    shutil.copy2(root / "frontend" / "favicon.svg", release / "logo.svg")
     # Keep hashed chunks referenced by already-open pages across atomic upgrades.
     if (destination / "assets").is_dir():
         for asset in (destination / "assets").iterdir():

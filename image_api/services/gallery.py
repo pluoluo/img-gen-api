@@ -222,19 +222,43 @@ async def save_image(
     return records
 
 
-def count_images(keyword: str = "") -> int:
+def _local_created_at(value):
+    try:
+        created = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return created.astimezone().replace(tzinfo=None) if created.tzinfo is not None else created
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _dated_gallery_rows(keyword, start_date, end_date):
+    rows = _get_conn().execute(
+        "SELECT id, created_at, model, sub_model, prompt, size, quality, n, image_url, filename "
+        "FROM images WHERE prompt LIKE ? OR sub_model LIKE ? ORDER BY created_at DESC, id DESC",
+        ("%" + keyword + "%", "%" + keyword + "%"),
+    ).fetchall()
+    return [row for row in rows if (created := _local_created_at(row[1])) is not None
+            and (start_date is None or created.date() >= start_date)
+            and (end_date is None or created.date() <= end_date)]
+
+
+def count_images(keyword: str = "", start_date=None, end_date=None) -> int:
+    if start_date is not None or end_date is not None:
+        return len(_dated_gallery_rows(keyword, start_date, end_date))
     query = "%" + keyword + "%"
     return _get_conn().execute("SELECT COUNT(*) FROM images WHERE prompt LIKE ? OR sub_model LIKE ?", (query, query)).fetchone()[0]
 
 
-def get_images(limit: int = 50, offset: int = 0, keyword: str = "") -> List[dict]:
+def get_images(limit: int = 50, offset: int = 0, keyword: str = "", start_date=None, end_date=None) -> List[dict]:
     """Return most recent images (newest first). Includes thumb_filename if available."""
     conn = _get_conn()
-    rows = conn.execute(
-        """SELECT id, created_at, model, sub_model, prompt, size, quality, n, image_url, filename
-           FROM images WHERE prompt LIKE ? OR sub_model LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-        ("%" + keyword + "%", "%" + keyword + "%", limit, offset),
-    ).fetchall()
+    if start_date is not None or end_date is not None:
+        rows = _dated_gallery_rows(keyword, start_date, end_date)[offset:offset + limit]
+    else:
+        rows = conn.execute(
+            """SELECT id, created_at, model, sub_model, prompt, size, quality, n, image_url, filename
+               FROM images WHERE prompt LIKE ? OR sub_model LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            ("%" + keyword + "%", "%" + keyword + "%", limit, offset),
+        ).fetchall()
     result = []
     for r in rows:
         rec = _row_to_dict(r)
@@ -313,3 +337,82 @@ def _row_to_dict(row) -> dict:
     result = dict(zip(keys, row))
     result["inputs"] = _record_inputs(result["id"])
     return result
+
+
+class GalleryCleanupChanged(ValueError):
+    """The records selected by a cleanup preview changed before confirmation."""
+
+
+def cleanup_before_date(*, months=None, before=None, today=None):
+    """Resolve calendar-month presets to the start of a local calendar day."""
+    import calendar
+    from datetime import date
+    today = today or date.today()
+    if (months is None) == (before is None):
+        raise ValueError("请选择一个时间范围或指定截止日期")
+    if months is not None:
+        if months not in (1, 3, 6):
+            raise ValueError("仅支持一个月前、三个月前或半年前")
+        year, month = divmod(today.year * 12 + today.month - 1 - months, 12)
+        before = date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
+    if before > today:
+        raise ValueError("截止日期不能晚于今天")
+    return before
+
+
+def _cleanup_rows(conn, before):
+    cutoff = datetime.combine(before, datetime.min.time())
+    result = []
+    for row in conn.execute("SELECT id, filename, created_at FROM images ORDER BY id").fetchall():
+        created = _local_created_at(row[2])
+        if created is not None and created < cutoff:
+            result.append(row)
+    return result
+
+
+def _cleanup_summary(before, rows):
+    fingerprint = hashlib.sha256(json.dumps([before.isoformat(), rows], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    return {"before": before.isoformat(), "cutoff": datetime.combine(before, datetime.min.time()).isoformat(), "count": len(rows), "fingerprint": fingerprint}
+
+
+def preview_gallery_cleanup(before):
+    from contextlib import closing
+    before = cleanup_before_date(before=before)
+    _get_conn()  # Ensure schema exists, without sharing another request's transaction.
+    with closing(sqlite3.connect(str(GALLERY_DB))) as conn:
+        return _cleanup_summary(before, _cleanup_rows(conn, before))
+
+
+def delete_gallery_before(before, fingerprint):
+    """Delete only the exact, confirmed old-image set; preserve reference archives."""
+    from contextlib import closing
+    before = cleanup_before_date(before=before)
+    _get_conn()
+    with closing(sqlite3.connect(str(GALLERY_DB))) as conn:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = _cleanup_rows(conn, before)
+            summary = _cleanup_summary(before, rows)
+            if summary["fingerprint"] != fingerprint:
+                raise GalleryCleanupChanged("待删除作品已变化，请重新预览并确认")
+            conn.executemany("DELETE FROM image_tasks WHERE image_id = ?", [(row[0],) for row in rows])
+            conn.executemany("DELETE FROM images WHERE id = ?", [(row[0],) for row in rows])
+            filenames = {row[1] for row in rows if row[1]}
+            # A retained gallery record may still use the same image file.
+            removable = [name for name in filenames if not conn.execute("SELECT 1 FROM images WHERE filename = ? LIMIT 1", (name,)).fetchone()]
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    failed_files = []
+    for filename in removable:
+        paths = [(GALLERY_DIR, filename), (THUMB_DIR, f"thumb_{filename}")]
+        for folder, name in paths:
+            path = folder / name
+            try:
+                if Path(name).name != name or path.resolve().parent != folder.resolve():
+                    raise ValueError("非法文件路径")
+                path.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                failed_files.append(name)
+    return {"ok": True, "deleted": len(rows), "before": before.isoformat(), "failed_files": failed_files}

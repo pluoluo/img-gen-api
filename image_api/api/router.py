@@ -4,6 +4,7 @@ from typing import Optional, List, Literal
 import asyncio
 import hashlib
 import base64
+from datetime import date
 
 from image_api.services.openai_img import generate_openai_image
 from image_api.services.gpt_route import (
@@ -416,9 +417,13 @@ async def list_gallery(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     keyword: str = "",
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
 ):
-    items = get_images(limit=limit, offset=offset, keyword=keyword.strip())
-    return GalleryListResponse(items=items, total=count_images(keyword.strip()))
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(422, "开始日期不能晚于结束日期")
+    items = get_images(limit=limit, offset=offset, keyword=keyword.strip(), start_date=start_date, end_date=end_date)
+    return GalleryListResponse(items=items, total=count_images(keyword.strip(), start_date=start_date, end_date=end_date))
 
 
 @router.get("/gallery/references/{filename}")
@@ -459,6 +464,37 @@ async def batch_delete_gallery_images(request: BatchDeleteRequest):
     """Delete multiple gallery images at once."""
     deleted = delete_batch(request.ids)
     return {"ok": True, "deleted": deleted}
+
+
+class GalleryCleanupPreviewRequest(BaseModel):
+    months: Optional[Literal[1, 3, 6]] = None
+    before: Optional[date] = None
+
+
+class GalleryCleanupRequest(BaseModel):
+    before: date
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@router.post("/gallery/cleanup/preview")
+async def preview_old_gallery_images(request: GalleryCleanupPreviewRequest):
+    from image_api.services.gallery import cleanup_before_date, preview_gallery_cleanup
+    try:
+        before = cleanup_before_date(months=request.months, before=request.before)
+        return preview_gallery_cleanup(before)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/gallery/cleanup")
+async def delete_old_gallery_images(request: GalleryCleanupRequest):
+    from image_api.services.gallery import GalleryCleanupChanged, delete_gallery_before
+    try:
+        return delete_gallery_before(request.before, request.fingerprint)
+    except GalleryCleanupChanged as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # ─── Prompt optimization proxy ──────────────────────────────────────────

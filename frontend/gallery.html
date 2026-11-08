@@ -346,6 +346,32 @@ h1 {
   .modal-img-wrap img { max-height: 50vh; }
   .nav-btn { width: 36px; height: 36px; line-height: 36px; font-size: 1rem; }
 }
+header, .header-actions { flex-wrap: wrap; gap: 12px; }
+.cleanup-dialog { margin: auto; width: min(520px, calc(100% - 32px)); max-height: 85dvh; overflow: auto; padding: 24px; border: 1px solid #353543; border-radius: 12px; background: #141419; color: #e5e5e5; }
+.cleanup-dialog::backdrop { background: #000a; }
+.cleanup-dialog h2 { font-size: 1.25rem; margin-bottom: 16px; }
+.cleanup-dialog p { line-height: 1.7; margin-bottom: 16px; color: #bbb; }
+.cleanup-dialog label { display: block; margin: 16px 0 8px; }
+.cleanup-dialog select, .cleanup-dialog input { width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; color-scheme: dark; background: #202028; color: #eee; font: inherit; }
+.cleanup-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.cleanup-dialog button:disabled { opacity: .45; cursor: default; }
+.cleanup-dialog :focus-visible { outline: 2px solid #99aaff; outline-offset: 3px; }
+#cleanupDelete { color: #ffb0b0; }
+#cleanupStatus { margin-top: 16px; white-space: pre-line; }
+.time-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 16px; }
+.time-filter label { display: grid; gap: 6px; font-size: .85rem; color: #ccc; }
+.time-filter input { min-width: 0; padding: 8px 10px; border: 1px solid #444; border-radius: 6px; background: #202028; color: #eee; color-scheme: dark; font: inherit; }
+.filter-summary { color: #bbb; font-size: .9rem; line-height: 1.7; margin-bottom: 16px; }
+.time-filter :focus-visible { outline: 2px solid #99aaff; outline-offset: 3px; }
+.card .created-date { color: #aaa; font-size: .75rem; margin-top: 8px; }
+.modal-actions { flex-wrap: wrap; }
+.modal-actions > * { white-space: nowrap; }
+.asset-btn { background: #202028; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 10px 16px; font: inherit; font-size: .85rem; cursor: pointer; }
+.asset-btn:hover { background: #30303a; }
+.asset-btn:disabled { opacity: .6; cursor: default; }
+.asset-btn:focus-visible { outline: 2px solid #99aaff; outline-offset: 3px; }
+.asset-status { color: #bbb; font-size: .85rem; line-height: 1.6; margin: 12px 0; }
+.asset-status a { color: #c4ccff; }
 </style>
 </head>
 <body>
@@ -354,11 +380,20 @@ h1 {
     <h1>🖼️ 图片库</h1>
     <div class="header-actions">
       <a href="/logs" style="background:#1a1a22;border:1px solid #2a2a35;color:#ccc;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:0.85rem;text-decoration:none;">📋 日志</a>
+      <button class="select-btn" id="cleanupOpen">按时间清理</button>
       <button class="select-btn" id="selectBtn">☑️ 选择</button>
       <button class="cancel-btn" id="cancelSelectBtn" style="display:none">取消选择</button>
       <a href="/" class="back-btn">← 返回画布</a>
     </div>
   </header>
+
+  <form class="time-filter" id="timeFilter">
+    <label for="filterStart">开始日期<input id="filterStart" type="date"></label>
+    <label for="filterEnd">结束日期<input id="filterEnd" type="date"></label>
+    <button class="select-btn" type="submit">筛选作品</button>
+    <button class="cancel-btn" type="button" id="filterClear">显示全部</button>
+  </form>
+  <p class="filter-summary" id="filterSummary" role="status" aria-live="polite">按生成时间筛选，开始和结束日期均包含当天；留空表示不限，按服务器本地时间计算。</p>
 
   <!-- Batch delete toolbar -->
   <div class="batch-toolbar" id="batchToolbar">
@@ -370,6 +405,21 @@ h1 {
   <div class="empty" id="empty" style="display:none">暂无图片，生成一些吧～</div>
   <div class="load-more"><button id="loadMoreBtn" style="display:none">加载更多</button></div>
 </div>
+
+<dialog class="cleanup-dialog" id="cleanupDialog" aria-labelledby="cleanupTitle">
+  <h2 id="cleanupTitle">按时间清理旧作品</h2>
+  <p>范围为整个旧图库，不受页面筛选或勾选影响。需保留部分作品时，请先查看，再仅勾选不需要的作品进行批量删除。删除后无法恢复，原图、缩略图和图库记录会一并移除。仍引用原图链接的内容可能无法显示；已导入“我的资产”的独立副本会保留。</p>
+  <label for="cleanupPeriod">删除哪个时间之前的作品</label>
+  <select id="cleanupPeriod"><option value="1">一个月前</option><option value="3" selected>三个月前</option><option value="6">半年前</option><option value="custom">指定日期</option></select>
+  <div id="cleanupDateField" hidden><label for="cleanupDate">截止日期（不含当天）</label><input id="cleanupDate" type="date"></div>
+  <p id="cleanupStatus" role="status" aria-live="polite">先预览待删除数量，再确认删除。</p>
+  <div class="cleanup-actions">
+    <button class="cancel-btn" id="cleanupClose">取消</button>
+    <button class="select-btn" id="cleanupPreview">预览数量</button>
+    <button class="select-btn" id="cleanupView" disabled>查看这些作品</button>
+    <button class="batch-del-btn" id="cleanupDelete" disabled>确认删除</button>
+  </div>
+</dialog>
 
 <!-- Image detail modal -->
 <div class="modal" id="modal">
@@ -390,7 +440,9 @@ h1 {
       <div id="modalReferences" aria-label="生成参考图"></div>
       <p class="modal-date" id="modalDate"></p>
       <p class="modal-counter" id="modalCounter"></p>
+      <p class="asset-status" id="assetStatus" role="status" aria-live="polite"></p>
       <div class="modal-actions">
+        <button id="addAssetBtn" class="asset-btn">加入资产</button>
         <a id="downloadBtn" class="download-btn" href="#" download>⬇ 下载原图</a>
         <button class="delete-btn" id="deleteBtn">🗑 删除</button>
       </div>
@@ -421,6 +473,27 @@ const nextBtn = document.getElementById('nextBtn');
 
 let offset = 0;
 let loading = false;
+let galleryReloadPending = false;
+let galleryFilter = { start: '', end: '' };
+let galleryFilterRevision = 0;
+const filterSummary = document.getElementById('filterSummary');
+function applyGalleryFilter(start, end) {
+  galleryFilter = { start, end };
+  galleryFilterRevision++;
+  document.getElementById('filterStart').value = start;
+  document.getElementById('filterEnd').value = end;
+  exitSelectMode();
+  modal.classList.remove('show');
+  void loadGallery(true);
+}
+document.getElementById('timeFilter').addEventListener('submit', event => {
+  event.preventDefault();
+  const start = document.getElementById('filterStart').value;
+  const end = document.getElementById('filterEnd').value;
+  if (start && end && start > end) { filterSummary.textContent = '开始日期不能晚于结束日期，当前列表未改变。'; return; }
+  applyGalleryFilter(start, end);
+});
+document.getElementById('filterClear').addEventListener('click', () => applyGalleryFilter('', ''));
 const limit = 24;
 let currentItems = [];       // all loaded items for modal nav
 let currentIndex = -1;       // modal's current position in currentItems
@@ -504,6 +577,10 @@ async function renderCard(item) {
   if (item.size) meta.appendChild(buildTag(item.size));
   if (item.quality) meta.appendChild(buildTag(item.quality));
   info.appendChild(meta);
+  const date = document.createElement('p');
+  date.className = 'created-date';
+  date.textContent = formatDate(item.created_at);
+  info.appendChild(date);
   card.appendChild(img);
   card.appendChild(info);
   grid.appendChild(card);
@@ -572,10 +649,52 @@ function openModal(item) {
   modal.classList.add('show');
 }
 
+let addingAssetId = null;
+const addedAssetIds = new Set();
+const assetMessages = new Map();
+const addAssetBtn = document.getElementById('addAssetBtn');
+const assetStatus = document.getElementById('assetStatus');
+function renderAssetAction() {
+  const item = currentItems[currentIndex];
+  if (!item) return;
+  const added = addedAssetIds.has(item.id);
+  addAssetBtn.textContent = addingAssetId === item.id ? '正在加入…' : added ? '已加入资产' : '加入资产';
+  addAssetBtn.disabled = Boolean(addingAssetId) || added;
+  assetStatus.replaceChildren();
+  assetStatus.textContent = assetMessages.get(item.id) || '保存原图副本到当前浏览器的“我的资产”，清理旧图库后仍可使用。';
+  if (added) {
+    const link = document.createElement('a');
+    link.href = '/infinite/assets';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = ' 查看资产';
+    assetStatus.appendChild(link);
+  }
+}
+addAssetBtn.addEventListener('click', async () => {
+  const item = currentItems[currentIndex];
+  if (!item || addingAssetId || addedAssetIds.has(item.id)) return;
+  addingAssetId = item.id;
+  assetMessages.set(item.id, '正在保存原图，请稍候…');
+  renderAssetAction();
+  try {
+    const { addGalleryAsset } = await import('/infinite/legacy-gallery-assets.js');
+    await addGalleryAsset(item);
+    addedAssetIds.add(item.id);
+    assetMessages.set(item.id, '已保存到当前浏览器的“我的资产”。');
+  } catch (error) {
+    assetMessages.set(item.id, `加入失败：${error.message || '请检查图片是否可用后重试'}`);
+  } finally {
+    addingAssetId = null;
+    renderAssetAction();
+  }
+});
+
 function _renderModal() {
   const item = currentItems[currentIndex];
   if (!item) return;
 
+  renderAssetAction();
   modalPrompt.textContent = item.prompt;
   modalDate.textContent = formatDate(item.created_at);
   modalMeta.innerHTML = '';
@@ -701,15 +820,27 @@ modal.addEventListener('click', e => { if (e.target === modal) modal.classList.r
 // ─── Gallery loading ────────────────────────────────────────────────────────────
 
 async function loadGallery(reset=false) {
-  if (loading) return;
-  if (reset) { offset = 0; grid.innerHTML = ''; }
+  if (loading) { if (reset) galleryReloadPending = true; return; }
+  if (reset) { offset = 0; currentItems = []; grid.innerHTML = ''; }
   loading = true;
+  const revision = galleryFilterRevision;
+  const params = new URLSearchParams({ limit, offset });
+  if (galleryFilter.start) params.set('start_date', galleryFilter.start);
+  if (galleryFilter.end) params.set('end_date', galleryFilter.end);
+  filterSummary.textContent = '正在加载作品…';
+  loadMoreBtn.style.display = 'none';
 
   try {
-    const resp = await fetch(`/api/v1/gallery?limit=${limit}&offset=${offset}`);
+    const resp = await fetch(`/api/v1/gallery?${params}`);
     if (!resp.ok) throw new Error('加载失败: ' + resp.status);
     const data = await resp.json();
+    if (revision !== galleryFilterRevision) return;
     const items = data.items || [];
+    const range = galleryFilter.start || galleryFilter.end
+      ? `${galleryFilter.start || '不限'} 至 ${galleryFilter.end || '不限'}（含当天，服务器本地时间）`
+      : '全部时间';
+    filterSummary.textContent = `${range} · 共 ${data.total} 张作品。可点「选择」勾选要删除的作品，未选中的作品会保留。`;
+    empty.textContent = galleryFilter.start || galleryFilter.end ? '这个时间范围内没有作品' : '暂无图片，生成一些吧～';
 
     if (reset && items.length === 0) {
       empty.style.display = 'block';
@@ -728,13 +859,90 @@ async function loadGallery(reset=false) {
     loadMoreBtn.style.display = items.length === limit ? 'inline-block' : 'none';
   } catch(err) {
     console.error('加载失败:', err);
+    if (revision === galleryFilterRevision) filterSummary.textContent = '加载失败，请重新筛选或刷新页面。';
   } finally {
     loading = false;
+    if (galleryReloadPending) { galleryReloadPending = false; void loadGallery(true); }
   }
 }
 
 loadMoreBtn.addEventListener('click', () => loadGallery());
 loadGallery(true);
+
+const cleanupDialog = document.getElementById('cleanupDialog');
+const cleanupPeriod = document.getElementById('cleanupPeriod');
+const cleanupDate = document.getElementById('cleanupDate');
+const cleanupPreview = document.getElementById('cleanupPreview');
+const cleanupDelete = document.getElementById('cleanupDelete');
+const cleanupView = document.getElementById('cleanupView');
+const cleanupStatus = document.getElementById('cleanupStatus');
+let cleanupSnapshot = null;
+let cleanupBusy = false;
+function resetCleanup() {
+  cleanupSnapshot = null;
+  cleanupDelete.disabled = true;
+  cleanupView.disabled = true;
+  cleanupDelete.textContent = '确认删除';
+  cleanupStatus.textContent = '先预览待删除数量，再确认删除。';
+  document.getElementById('cleanupDateField').hidden = cleanupPeriod.value !== 'custom';
+}
+function setCleanupBusy(busy) {
+  cleanupBusy = busy;
+  cleanupPeriod.disabled = cleanupDate.disabled = cleanupPreview.disabled = busy;
+  cleanupDelete.disabled = busy || !cleanupSnapshot || !cleanupSnapshot.count;
+  cleanupView.disabled = busy || !cleanupSnapshot || !cleanupSnapshot.count;
+}
+async function cleanupRequest(path, body) {
+  const response = await fetch('/api/v1/gallery/cleanup' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '请求失败，请检查日期后重试');
+  return data;
+}
+document.getElementById('cleanupOpen').addEventListener('click', () => cleanupDialog.showModal());
+document.getElementById('cleanupClose').addEventListener('click', () => cleanupDialog.close());
+cleanupPeriod.addEventListener('change', resetCleanup);
+cleanupDate.addEventListener('input', resetCleanup);
+cleanupPreview.addEventListener('click', async () => {
+  resetCleanup();
+  if (cleanupPeriod.value === 'custom' && !cleanupDate.value) { cleanupStatus.textContent = '请选择截止日期。'; return; }
+  setCleanupBusy(true);
+  cleanupStatus.textContent = '正在统计整个图库…';
+  try {
+    cleanupSnapshot = await cleanupRequest('/preview', cleanupPeriod.value === 'custom' ? { before: cleanupDate.value } : { months: Number(cleanupPeriod.value) });
+    cleanupStatus.textContent = `${cleanupSnapshot.before} 00:00 之前（服务器本地时间）共有 ${cleanupSnapshot.count} 张作品。截止日期当天及之后的作品会保留。`;
+    cleanupDelete.textContent = `确认删除 ${cleanupSnapshot.count} 张作品`;
+  } catch (error) { cleanupStatus.textContent = error.message; }
+  finally { setCleanupBusy(false); }
+});
+cleanupView.addEventListener('click', () => {
+  if (cleanupBusy || !cleanupSnapshot) return;
+  const end = new Date(cleanupSnapshot.before + 'T00:00:00Z');
+  end.setUTCDate(end.getUTCDate() - 1);
+  applyGalleryFilter('', end.toISOString().slice(0, 10));
+  cleanupDialog.close();
+  // Reviewing does not confirm deletion; require a fresh preview when returning.
+  resetCleanup();
+});
+cleanupDelete.addEventListener('click', async () => {
+  if (cleanupBusy || !cleanupSnapshot || !cleanupSnapshot.count) return;
+  const confirmed = cleanupSnapshot;
+  setCleanupBusy(true);
+  cleanupStatus.textContent = '正在删除已确认的作品，请稍候…';
+  try {
+    const result = await cleanupRequest('', { before: confirmed.before, fingerprint: confirmed.fingerprint });
+    exitSelectMode();
+    modal.classList.remove('show');
+    void loadGallery(true);
+    resetCleanup();
+    if (result.failed_files.length) {
+      cleanupStatus.textContent = `已删除 ${result.deleted} 张作品的图库记录，但有 ${result.failed_files.length} 个文件未能清理。请检查磁盘权限。`;
+    } else {
+      cleanupDialog.close();
+      showToast(`已删除 ${result.deleted} 张旧作品`);
+    }
+  } catch (error) { resetCleanup(); cleanupStatus.textContent = error.message; }
+  finally { setCleanupBusy(false); }
+});
 </script>
 </body>
 </html>

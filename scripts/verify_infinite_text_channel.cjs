@@ -38,7 +38,7 @@ with zipfile.ZipFile('data/infinite-validation/text-channel.zip','w') as z:z.wri
       const url = route.request().url(), body = route.request().postDataJSON(); submissions.push({ url, body });
       if (failNext) return route.fulfill({ status: 403, json: { error: { message: "测试模型无权限" } } });
       if (url.endsWith('/chat/completions')) return route.fulfill({ headers: { ...headers, 'content-type': 'text/event-stream' }, body: 'data: ' + JSON.stringify({ choices: [{ delta: { content: generatedPrompt } }] }) + '\n\ndata: [DONE]\n\n' });
-      if (url.endsWith('/responses')) return route.fulfill({ headers: { ...headers, 'content-type': 'text/event-stream' }, body: 'data: {"type":"response.output_text.delta","delta":"显式 Responses 成功"}\n\ndata: [DONE]\n\n' });
+      if (url.endsWith('/responses')) return route.fulfill({ headers: { ...headers, 'content-type': 'text/event-stream' }, body: 'data: {"type":"response.output_text.delta","delta":"极简黑白线稿花卉静物，保留原有构图，画面文字为“春日”。"}\n\ndata: [DONE]\n\n' });
       return route.abort();
     });
     await page.route('**/api/v1/infinite/generate', async route => { imageSubmissions.push(route.request().postDataJSON()); await route.fulfill({ json: { task_id: 'text-prompt-image' } }); });
@@ -99,8 +99,18 @@ with zipfile.ZipFile('data/infinite-validation/text-channel.zip','w') as z:z.wri
     await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: output + '/text-channel-mobile.png', animations: 'disabled' });
     await drawer.getByRole('button', { name: /保\s*存/ }).click();
     await page.setViewportSize({ width: 1500, height: 1000 }); await page.goto(projectUrl);
-    await generate('改写这句话'); await savedText('显式 Responses 成功');
+    await generate('改成极简黑白线稿，删去厚涂与暖色光影，增加画面文字“春日”，不要分段标题。'); await savedText('极简黑白线稿花卉静物，保留原有构图，画面文字为“春日”。');
     assert.equal(submissions.length, 2); assert.equal(submissions[1].url, origin + '/api/v1/infinite/mimo/token-plan-cn/v1/responses'); assert.ok(submissions[1].body.input); assert.ok(submissions[1].body.input.find(m => m.role === 'system').content.includes('GPT Image 2.5')); assert.equal(submissions[1].body.messages, undefined);
+    const revisionSystem = submissions[1].body.input.find(m => m.role === 'system').content;
+    assert.ok(revisionSystem.includes('本次修改意见优先'));
+    assert.ok(revisionSystem.includes('用户要求大幅修改时应充分落实'));
+    assert.ok(revisionSystem.includes('不强制分段、加标题'));
+    assert.ok(!revisionSystem.includes('标题独占一行'));
+    const revisionInput = JSON.stringify(submissions[1].body.input.filter(m => m.role !== 'system'));
+    assert.ok(revisionInput.includes('本次修改意见（优先落实）'));
+    assert.ok(revisionInput.includes('删去厚涂与暖色光影'));
+    assert.ok(revisionInput.includes('一幅古典油画风格'));
+    await page.screenshot({ path: output + '/text-revision-result.png', animations: 'disabled' });
     const preserved = await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('infinite-canvas:ai_config_store')).state.config; return { text: c.textModel, audio: c.audioModel, image: c.imageModel, protocol: c.channels.find(x => x.id === 'mimo-test').textApiFormat, audioPresent: c.channels.some(x => x.id === 'audio-test') }; });
     assert.equal(preserved.text, 'mimo-test::mimo-v2.6-pro'); assert.equal(preserved.audio, 'audio-test::tts-test'); assert.equal(preserved.protocol, 'responses'); assert.equal(preserved.audioPresent, true); assert.ok(preserved.image.startsWith('image-api::'));
     await page.reload(); failNext = true; await generate('模拟失败以验证错误保留');
@@ -111,7 +121,7 @@ with zipfile.ZipFile('data/infinite-validation/text-channel.zip','w') as z:z.wri
     await page.screenshot({ path: output + '/text-channel-error.png', animations: 'disabled' });
     assert.equal(submissions.length, 3);
     assert.deepEqual(otherPosts, []); assert.deepEqual(errors, []);
-    const result = { structuredPromptParagraphs: true, paragraphBreaksDisplayedAndPassedToImage: true, imagePromptContractOnChatAndResponses: true, customSystemPromptPreserved: true, generatedPromptFeedsImageNode: true, promptRoleNotLeakedIntoImageRequest: true, mockedImageRequests: imageSubmissions.length, mimoAutoChat: true, sameOriginRelay: true, bypassesUnreachableLocalProxy: true, nodeRetainsProviderError: true, baseUrlV1Preserved: true, streamingResultOnNode: true, resultSurvivesReload: true, explicitResponsesPersists: true, responsesStillWorks: true, userAudioAndTextPreserved: true, imageRoutingPreserved: true, mockedRequests: submissions.map(s => s.url), otherPostRequests: otherPosts, browserErrors: errors };
+    const result = { revisionInstructionsPrioritized: true, revisionSkipsCreationFormatting: true, explicitChangesCanReplaceOriginalRequirements: true, structuredPromptParagraphs: true, paragraphBreaksDisplayedAndPassedToImage: true, imagePromptContractOnChatAndResponses: true, customSystemPromptPreserved: true, generatedPromptFeedsImageNode: true, promptRoleNotLeakedIntoImageRequest: true, mockedImageRequests: imageSubmissions.length, mimoAutoChat: true, sameOriginRelay: true, bypassesUnreachableLocalProxy: true, nodeRetainsProviderError: true, baseUrlV1Preserved: true, streamingResultOnNode: true, resultSurvivesReload: true, explicitResponsesPersists: true, responsesStillWorks: true, userAudioAndTextPreserved: true, imageRoutingPreserved: true, mockedRequests: submissions.map(s => s.url), otherPostRequests: otherPosts, browserErrors: errors };
     fs.writeFileSync(output + '/text-channel-result.json', JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });
