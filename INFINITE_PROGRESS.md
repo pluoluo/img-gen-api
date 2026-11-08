@@ -5,12 +5,22 @@
 ## 代码与部署
 
 - 后端：`/home/sahn/image-api`，保留原有工作区及未提交修改。
-- 前端 fork：`https://github.com/pluoluo/infinite-canvas`。
-- 本地：`/home/sahn/infinite-canvas`，分支 `integration/image-api`。
+- 前端源码已合并至本仓库 `infinite/web/`，Agent、代理、插件和原项目文档均在 `infinite/` 下；后续仅开发和同步 image-api。
+- 历史集成来源：`https://github.com/pluoluo/infinite-canvas` 的 `integration/image-api` 分支，导入提交 `7a89ff3e1f6beff6f759d85e18f9c0d407879f45`。
+- 在本仓库根目录执行 `venv/bin/python scripts/build_infinite.py`，不再依赖相邻源码目录；完整说明和鸣谢见 README 及 `infinite/UPSTREAM.md`。
 - 上游基线：`9cd3dea`。
 - 同源入口：`/infinite/`，FastAPI 提供静态前端与 SPA 回退。
 - 默认服务商由 `/api/v1/infinite/config` 注入，仅返回模型元信息，不返回供应商密钥。
 - 文生图/参考图编辑走已有任务 API；保留外部供应商、文本、视频、音频和自定义脚本能力。
+
+## 源码合并与单仓库验证
+
+- 将集成 fork 的前端、Canvas Agent、代理、插件、文档、版本记录及 MIT 许可证导入 `infinite/`，保留项目来源和版权；不导入旧仓库 Git 数据、工作流、开发技能包、依赖、构建产物或用户运行数据。保留本地插件 marketplace 清单。
+- 构建脚本默认读取 `infinite/web/`，构建信息使用 image-api 仓库版本，发布目录附带 `infinite-canvas-LICENSE.txt`；README 补充项目介绍、鸣谢、首次部署和其他环境更新步骤。
+- Canvas Agent 原 npm 锁文件缺少 esbuild 的跨平台可选依赖记录，补齐后可在全新环境执行 `npm ci`；现有依赖版本未变。
+- 在独立临时副本中验证：没有相邻 infinite-canvas 目录、没有预装前端依赖或构建产物，使用默认参数完成锁定依赖安装、TypeScript 检查和生产构建。61 项前端测试、16 项 Infinite 后端测试通过；Agent 全新安装、TypeScript 构建和 126 项测试通过。
+- 隔离测试服务启用 `INFINITE_OFFLINE_VALIDATION=1`，图库、任务、同步和提示词数据均指向临时目录。验证首页跳转、13 个入口/资源返回 200、缺失 JS 返回 404、构建来源与许可证；浏览器验证画布新增文字及刷新恢复、生图工作台、配置、资产与手机画布入口，页面脚本错误和 POST 请求均为 0。记录与截图位于 `data/infinite-validation/source-merge/`。
+- 原 `/home/sahn/infinite-canvas` 目录保留为迁移前备份，不再作为开发或部署依赖；当前运行的独立 Agent 服务及其 `~/.infinite-canvas/` 配置未迁移。其他环境实际部署仍需按 README 执行构建并单独准备配置和数据。
 
 ## 验收矩阵
 

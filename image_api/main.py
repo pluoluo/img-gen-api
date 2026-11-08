@@ -36,7 +36,7 @@ app.include_router(infinite_router, prefix="/api/v1")
 app.include_router(infinite_storage_router, prefix="/api/v1")
 app.include_router(infinite_provider_router, prefix="/api/v1")
 
-# Build once with `cd canvas && npm ci && npm run build`; no Node production process.
+# Build with `venv/bin/python scripts/build_infinite.py`; no frontend production process.
 _FRONTEND = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 _INFINITE_FRONTEND = os.environ.get("INFINITE_FRONTEND_DIR", os.path.join(_FRONTEND, "infinite"))
 

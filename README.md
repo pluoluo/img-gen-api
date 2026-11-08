@@ -1,8 +1,10 @@
 # Image Generation API
 
-统一图片生成服务（FastAPI）：Web 界面 + REST API，底层聚合 open-hk、PackyAPI、Gemini、MiniMax。
+统一图片生成服务（FastAPI）：Infinite 无限画布工作区 + REST API，底层聚合 open-hk、PackyAPI、Gemini、MiniMax。
 
-本仓库当前部署在 NAS 上，对外端口是 **8080**（不是 8000；8000 是飞牛管理页）。局域网访问：`http://<NAS_IP>:8080`。
+Infinite 前端、可选 Canvas Agent、代理和节点插件源码已合并到本仓库的 [`infinite/`](infinite/)。后续只开发和同步 image-api，不再需要单独克隆或更新 infinite-canvas。项目来源与鸣谢见下方「Infinite 项目来源与鸣谢」。
+
+下方启动示例使用 **8080**，实际访问端口以各环境的 Uvicorn 或服务配置为准。局域网访问示例：`http://<NAS_IP>:8080`。
 
 更完整的接入说明（异步轮询、字段、给 Codex 用的示例）见 [CODEX_INTEGRATION.md](CODEX_INTEGRATION.md)。
 
@@ -41,6 +43,8 @@
 
 ### 1. 安装依赖
 
+准备 Python、Node.js（22.12+）和 Bun。Bun 用于按锁文件安装及构建 Infinite 前端，Python 用于启动后端；生产运行网站不需要单独启动 Vite。
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -73,7 +77,17 @@ PROMPT_PORTAL_URL=http://127.0.0.1:8768
 
 `api.openai-hk.com` 与 Packy 国内中继 `cf.api.fan` 应直连，不要走代理链。
 
-### 3. 启动
+### 3. 构建画布前端
+
+在仓库根目录执行：
+
+```bash
+venv/bin/python scripts/build_infinite.py
+```
+
+脚本从本仓库 `infinite/web/` 安装锁定的依赖、检查类型并构建，将静态文件发布到 `frontend/infinite`。首次部署以及前端更新后都需要执行；仅 `git pull` 不会自动更新已部署页面。构建产物不提交到 Git，其他环境可直接从同一仓库重建，无需相邻的 infinite-canvas 目录。
+
+### 4. 启动
 
 本仓库 systemd 用户服务（生产）：
 
@@ -82,7 +96,7 @@ systemctl --user restart image-api.service
 systemctl --user status image-api.service
 ```
 
-本地调试（必须 8080，且从仓库根目录启动）：
+本地调试（从仓库根目录启动，按需调整端口）：
 
 ```bash
 PYTHONPATH=. venv/bin/python -m uvicorn image_api.main:app --host 0.0.0.0 --port 8080
@@ -90,9 +104,11 @@ PYTHONPATH=. venv/bin/python -m uvicorn image_api.main:app --host 0.0.0.0 --port
 
 健康检查：`GET /health` → `{"status":"healthy"}`。
 
-### 4. Web 界面
+### 5. Web 界面
 
-- `/` 生成页
+- `/` 默认跳转到 `/infinite/canvas`
+- `/infinite/canvas` Infinite 画布工作区
+- `/legacy` 旧版生成页
 - `/gallery` 图库
 - `/logs` 日志
 - `/docs` Swagger
@@ -101,6 +117,22 @@ PYTHONPATH=. venv/bin/python -m uvicorn image_api.main:app --host 0.0.0.0 --port
 前端费用栏 `#hintBar` 以 `GET /api/v1/gpt-route` 为准，不要写死「大小同价」或「1K 以上 0.18」。
 
 改布局请先在 `sketches/`（本机 8099）做原型，再动正式页。
+
+### 6. 其他环境更新
+
+当前完整集成版本位于 `integration/infinite` 分支，其他环境也应切换到这个分支再更新：
+
+```bash
+git fetch origin
+git switch integration/infinite
+git pull --ff-only
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python scripts/build_infinite.py
+# 使用 systemd 的环境，再重启自己配置的 image-api 服务
+systemctl --user restart image-api.service
+```
+
+首次部署先完成上面的虚拟环境和 `.env` 配置。前端与后端代码都来自本仓库；`.env`、图库、`data/`、浏览器画布/素材及 Agent 运行配置不会随 Git 同步，需要各环境单独配置或迁移。旧 Prompt Portal 的本机模板和案例仍是可选外部数据，可通过 `PROMPT_PORTAL_DATA_DIR` 指定；缺少时不包含这些本机条目，不影响画布主体和在线来源。
 
 ## API 要点
 
@@ -213,13 +245,26 @@ FastAPI + Uvicorn、httpx、Pillow、python-multipart、pydantic-settings。
 
 ## Infinite 无限画布
 
-主画布改用 [pluoluo/infinite-canvas](https://github.com/pluoluo/infinite-canvas) 的完整工作台。克隆 fork 后切换到 `integration/image-api` 分支，在本仓库执行：
+主画布基于 Infinite Canvas 完整工作台，源码已从集成 fork 导入本仓库。目录分工：
+
+| 目录 | 用途 |
+|------|------|
+| `infinite/web/` | React / TypeScript / Vite 画布及工作台前端 |
+| `infinite/canvas-agent/` | 可选 Canvas Agent，连接本机 Codex / Claude Code |
+| `infinite/canvas-proxy/` | 可选本地转发代理 |
+| `infinite/plugins/` | 画布节点插件、SDK 及 Agent 插件源码 |
+| `infinite/docs/` | 原项目功能、操作及开发文档 |
+| `image_api/` | 图片 API、任务、图库及 Infinite 同源适配接口 |
+
+在本仓库根目录构建：
 
 ```bash
-venv/bin/python scripts/build_infinite.py --source /home/sahn/infinite-canvas
+venv/bin/python scripts/build_infinite.py
 ```
 
 构建检查通过后静态资源以原子链接方式发布到 `frontend/infinite`。FastAPI 需要重启一次以加载新增后端路由；之后纯前端构建无需重启。入口 HTML、构建信息和运行配置禁止缓存；旧版内嵌 Infinite 的地址及工作区脚本带构建提交号，避免更新后仍加载旧入口。首页 `/` 默认跳转至 Infinite 画布工作区 `/infinite/canvas`，原生成界面保留在 `/legacy`，旧 Konva 工作区保留在 `/canvas/`。画布顶部提供「旧版生成」和「日志」入口，旧图库沿用画布内的「旧图库」入口。
+
+Canvas Agent 和本地代理按需单独运行。使用仓库内的 Agent 版本时，从仓库根目录执行 `cd infinite/canvas-agent && npm ci && npm run build && npm start`，连接与配置说明见 [Canvas Agent README](infinite/canvas-agent/README.md)。已有独立安装的 Agent 可继续运行；合并源码不会自动替换本机服务或迁移 `~/.infinite-canvas/` 配置与对话数据。
 
 Infinite 自动加载本服务的图片模型并调用原异步任务接口；GPT 图片请求继续使用已有 openai-hk/Packy 双来源自动路由，浏览器只显示一个「本机生图服务」，无需填写默认渠道或复制供应商密钥。当前没有配置文本、音频或视频服务，不会自动注册这些模型和渠道；如需使用，应自行配置具备对应权限的渠道。取消前端查询不会取消已提交的付费上游任务。
 
@@ -233,7 +278,13 @@ Infinite 图片节点和生图工作台会在提交前保存请求标识，刷�
 
 完整接入范围、验证结果与剩余事项见 [INFINITE_PROGRESS.md](INFINITE_PROGRESS.md)。
 
-浏览器模拟验收必须使用独立测试服务，设置 `INFINITE_OFFLINE_VALIDATION=1` 并通过 `INFINITE_FRONTEND_DIR` 指向 fork 的 `web/dist`。写入图库的测试还须设置 `GALLERY_DATA_DIR` 指向独立测试目录，默认生产路径仍为 `/vol1/1000/note/memory/AI生成图片/`。测试服务拒绝创建生成任务及供应商 POST；脚本启动前会检查隔离标记，并生成本地 PNG fixture。生产服务不应启用该标记。可运行 `node scripts/verify_infinite_workbench.cjs`、`node scripts/verify_infinite_gallery.cjs` 等脚本查看验收产物，输出位于 `data/infinite-validation/`。
+浏览器模拟验收必须使用独立测试服务，设置 `INFINITE_OFFLINE_VALIDATION=1` 并通过 `INFINITE_FRONTEND_DIR` 指向本仓库已构建的 `frontend/infinite`，或已按集成参数构建的 `infinite/web/dist`。写入图库的测试还须设置 `GALLERY_DATA_DIR` 指向独立测试目录，默认生产路径仍为 `/vol1/1000/note/memory/AI生成图片/`。测试服务拒绝创建生成任务及供应商 POST；脚本启动前会检查隔离标记，并生成本地 PNG fixture。生产服务不应启用该标记。可运行 `node scripts/verify_infinite_workbench.cjs`、`node scripts/verify_infinite_gallery.cjs` 等脚本查看验收产物，输出位于 `data/infinite-validation/`。
+
+### Infinite 项目来源与鸣谢
+
+感谢 [basketikun](https://github.com/basketikun) 及 [Infinite Canvas](https://github.com/basketikun/infinite-canvas) 项目的所有贡献者，提供无限画布、多模态创作工作台、节点插件和本地 Agent 连接等基础能力。本项目在此基础上接入 image-api 的模型路由、异步任务恢复、旧图库与统一提示词库，并继续在本仓库维护。
+
+合并来源为 [pluoluo/infinite-canvas](https://github.com/pluoluo/infinite-canvas) 的 `integration/image-api` 分支，导入提交为 `7a89ff3e1f6beff6f759d85e18f9c0d407879f45`。Infinite Canvas 采用 MIT 许可证，原作者版权声明和完整许可保留于 [`infinite/LICENSE`](infinite/LICENSE)，发布的前端也附带许可文件。详细来源记录见 [`infinite/UPSTREAM.md`](infinite/UPSTREAM.md)。
 
 ## 统一提示词库
 
