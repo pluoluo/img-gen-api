@@ -453,7 +453,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
-        textApiFormat: channel.textApiFormat || (isMiMoBaseUrl(channel.baseUrl) ? "chat-completions" : "responses"),
+        textApiFormat: channel.textApiFormat || (isMiMoBaseUrl(channel.baseUrl) || isManagedImageApiProvider(channel.baseUrl) ? "chat-completions" : "responses"),
     };
 }
 

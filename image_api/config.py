@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # Prompt Portal (for AI prompt optimization)
     prompt_portal_url: str = "http://127.0.0.1:8768"
 
+    # Optional global fallback text channel (browser can still add more).
+    # TEXT_API_KEY is required to advertise it; TEXT_BASE_URL defaults to OPENAI_BASE_URL.
+    text_api_key: Optional[str] = None
+    text_base_url: Optional[str] = None
+    text_model: Optional[str] = None
+    # chat-completions (default, DeepSeek / 兼容网关) or responses (官方 OpenAI)
+    text_api_format: Optional[str] = None
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000

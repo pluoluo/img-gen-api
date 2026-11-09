@@ -4,7 +4,7 @@ import { modelOptionsFromChannels, useConfigStore, type ChannelModel, type Model
 export async function initializeImageApi() {
     // The upstream standalone application remains usable without image-api.
     if (!import.meta.env.VITE_IMAGE_API) return;
-    const metadata = await imageApiRequest<{ app: string; models: ChannelModel[]; provider_models: ChannelModel[] }>(`${IMAGE_API_PATH}/config`);
+    const metadata = await imageApiRequest<{ app: string; models: ChannelModel[]; provider_models: ChannelModel[]; text_api_format?: "chat-completions" | "responses" }>(`${IMAGE_API_PATH}/config`);
     if (metadata.app !== "image-api") throw new Error("画布服务配置不正确");
     const { config, webdav } = useConfigStore.getState();
     const channel: ModelChannel = {
@@ -21,11 +21,13 @@ export async function initializeImageApi() {
         id: "image-api-openai",
         name: "本机文本与音频服务",
         baseUrl: `${channel.baseUrl}/openai`,
+        textApiFormat: metadata.text_api_format === "responses" ? "responses" : "chat-completions",
         models: metadata.provider_models.map((model) => ({ ...model, script: providerModels.find((item) => item.name === model.name)?.script })),
     };
     const defaultChannelConfigured = Boolean(config.channels.find((item) => item.id === "default")?.apiKey.trim());
     const channels = [channel, ...(provider.models.length ? [provider] : []), ...config.channels.filter((item) => item.id !== channel.id && item.id !== provider.id && (item.id !== "default" || defaultChannelConfigured))];
     const firstModel = metadata.models[0]?.name;
+    const fallbackText = provider.models[0] ? `image-api-openai::${provider.models[0].name}` : "";
     const unsupportedSelection = (value: string) => (!defaultChannelConfigured && value.startsWith("default::")) || (!provider.models.length && value.startsWith("image-api-openai::"));
     const unconfiguredDefault = config.imageModel.startsWith("default::") && !defaultChannelConfigured;
     const imageModel = (!config.imageModel || unconfiguredDefault) && firstModel ? `image-api::${firstModel}` : config.imageModel;
@@ -36,7 +38,7 @@ export async function initializeImageApi() {
             models: modelOptionsFromChannels(channels),
             imageModel,
             model: imageModel,
-            textModel: unsupportedSelection(config.textModel) ? "" : config.textModel,
+            textModel: unsupportedSelection(config.textModel) || !config.textModel ? fallbackText : config.textModel,
             audioModel: unsupportedSelection(config.audioModel) ? "" : config.audioModel,
             videoModel: unsupportedSelection(config.videoModel) ? "" : config.videoModel,
         },

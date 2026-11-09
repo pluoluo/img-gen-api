@@ -36,6 +36,9 @@ test("MiMo auto-selects Chat; other providers retain Responses and explicit prot
     const other = { ...channel, baseUrl: "https://provider.example/v1" };
     expect(resolveModelRequestConfig({ ...config, channels: [other] }, config.model).textApiFormat).toBe("responses");
     expect(resolveModelRequestConfig({ ...config, channels: [{ ...channel, baseUrl: "https://api.xiaomimimo.com.evil.example/v1" }] }, config.model).textApiFormat).toBe("responses");
+    Object.defineProperty(globalThis, "location", { configurable: true, value: { origin: "http://nas.test" } });
+    const managed = createModelChannel({ id: "image-api-openai", name: "本机文本", baseUrl: "http://nas.test/api/v1/infinite/openai", apiKey: "", apiFormat: "openai", models: [{ name: "deepseek-flash", capability: "text" }] });
+    expect(resolveModelRequestConfig({ ...config, model: "image-api-openai::deepseek-flash", channels: [managed] }, "image-api-openai::deepseek-flash").textApiFormat).toBe("chat-completions");
 });
 test("base URLs with or without v1/trailing slash join exactly once", () => {
     for (const base of ["https://token-plan-cn.xiaomimimo.com", "https://token-plan-cn.xiaomimimo.com/v1", "https://token-plan-cn.xiaomimimo.com/v1/"]) expect(buildApiUrl(base, "/chat/completions")).toBe("https://token-plan-cn.xiaomimimo.com/v1/chat/completions");

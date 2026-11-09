@@ -33,8 +33,8 @@ curl http://10.40.92.99:8080/health
 
 核心交互模型是 **异步任务**：
 1. `POST /api/v1/generate` 提交生成请求，服务端**立即返回 `task_id`**（后台异步生成）；
-2. 客户端**轮询** `GET /api/v1/tasks/{task_id}` 直到 `status == "completed"` 或 `"failed"`；
-3. 生成通常耗时 30 秒 ~ 数分钟（4K 大图可达 900 秒），轮询间隔建议 2~5 秒。
+2. 客户端**轮询** `GET /api/v1/tasks/{task_id}` 直到 `status == "completed"`、`"failed"` 或 `"cancelled"`；
+3. 生成通常耗时 30 秒 ~ 数分钟。read 超时：长边 ≤2048 为 360 秒，>2048（4K）为 600 秒。需要停止时 `POST /api/v1/tasks/{task_id}/cancel`。
 
 ---
 
@@ -258,12 +258,12 @@ def generate_image(prompt: str, model="auto", sub_model="auto",
 4. **base64 无前缀**：返回的 `base64` 字段是纯 base64，写文件前先 `base64.b64decode()`；如需 data URL 自己加 `data:image/png;base64,`。
 5. **无鉴权**：接口未做认证，仅在可信内网使用；不要把供应商 Key 放进客户端代码（Key 在服务端 .env）。
 6. **prompt 是中文友好**：各供应商对中文提示词支持良好，可直接使用中文。
-7. **失败排查**：任务 `failed` 时看 `error`（含堆栈；API 类错误现已解析出供应商原始 message，如 `This token has no access to model ...`）和 `raw_response`（供应商原始返回）；服务端 JSON 结构化日志在 NAS 的 `/tmp/image-api.log`（NAS 上执行 `tail -30 /tmp/image-api.log`，每行一条 JSON）。
-8. **生成长耗时**：单任务最长 900 秒；多任务并发建议控制在 2~3 个以内（供应商限流）。
+7. **失败排查**：任务 `failed` 时 `error` 是给用户看的短中文；traceback / PIL / httpx 只在 `/tmp/image-api.log` 和 `/logs`。`raw_response` 仍是供应商原始返回。
+8. **生成长耗时**：read 超时 1K/2K 360 秒、4K 600 秒；多任务并发建议控制在 2~3 个以内（供应商限流）。停止用 `POST /api/v1/tasks/{id}/cancel`。
 9. **图生图要求**：参考图 base64 必须是 PNG/JPEG 解码后的原始 base64；尺寸合规由服务端自动处理，客户端传 `auto` 或期望宽度即可。
 10. **运维操作在 NAS 上做**：改代码后重启服务用 `systemctl --user restart image-api.service`；看日志用 `tail -30 /tmp/image-api.log`（不是 journalctl）——这些都需要 SSH 登录 NAS 执行，Windows 客户端只需调 API。
 11. **Windows 上验证连通**：`curl http://10.40.92.99:8080/health` 返回 `{"status":"healthy"}` 即正常。
-12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按尺寸分流：1K→openai-hk，以上→packy。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
+12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按总像素分流：1K→openai-hk，以上→packy。`size=auto` 且无参考图固定 openai-hk。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
 13. **费用**：1K 走 openai-hk 约 0.08 元/张；1K 以上走 packy 按量。不要写死「大小同价」。当前文案以 `GET /api/v1/gpt-route` 为准。
 
 ---

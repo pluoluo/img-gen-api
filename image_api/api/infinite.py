@@ -17,6 +17,25 @@ def model_catalog():
     return json.loads(CATALOG.read_text(encoding="utf-8"))["MODELS"]
 
 
+def _nonempty(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def text_provider_models():
+    """Advertise .env TEXT_MODEL only when TEXT_API_KEY is set. Image keys do not count."""
+    if not _nonempty(settings.text_api_key):
+        return []
+    names = [part.strip() for part in _nonempty(settings.text_model).split(",") if part.strip()]
+    return [{"name": name, "label": name, "capability": "text"} for name in names]
+
+
+def text_api_format():
+    raw = _nonempty(settings.text_api_format).lower().replace("_", "-")
+    if raw in ("responses", "response"):
+        return "responses"
+    return "chat-completions"
+
+
 @router.get("/config")
 def configuration():
     # Only capability metadata crosses this boundary, never provider credentials.
@@ -34,7 +53,9 @@ def configuration():
         "storage": "browser",
         "offline_validation": settings.infinite_offline_validation is True,
         # Image-provider credentials do not establish text/audio model availability.
-        "provider_models": [],
+        # TEXT_API_KEY + TEXT_MODEL advertise a same-origin fallback channel; browser channels stay.
+        "provider_models": text_provider_models(),
+        "text_api_format": text_api_format(),
     }
 
 

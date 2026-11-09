@@ -1,4 +1,5 @@
 """Single-worker task journal. Results and submission identities survive restart."""
+import asyncio
 import uuid
 import json
 import os
@@ -16,6 +17,7 @@ class TaskStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -35,6 +37,7 @@ class Task:
     images: List[dict] = field(default_factory=list)  # final results
     error: Optional[str] = None
     raw_response: Optional[str] = None  # raw API response on failure
+    handle: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
 
 
 _tasks: dict[str, Task] = {}
@@ -59,7 +62,14 @@ def get_submission(request_id):
 
 
 def _save(connection, task):
-    connection.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?)", (task.id, _session, json.dumps(asdict(task), ensure_ascii=False)))
+    handle = task.handle
+    task.handle = None
+    try:
+        snapshot = asdict(task)
+    finally:
+        task.handle = handle
+    snapshot.pop("handle", None)
+    connection.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?)", (task.id, _session, json.dumps(snapshot, ensure_ascii=False)))
 
 
 def reserve_task(*, client_request_id=None, fingerprint=None, **parameters):
@@ -109,6 +119,7 @@ def get_task(task_id: str) -> Optional[Task]:
             return None
         values = json.loads(row[1])
         values["status"] = TaskStatus(values["status"])
+        values.pop("handle", None)
         task = Task(**values)
         if row[0] != _session and task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
             task.status = TaskStatus.FAILED
@@ -127,3 +138,34 @@ def update_task(task_id: str, **kwargs):
                 setattr(task, k, v)
         with database() as connection:
             _save(connection, task)
+
+
+def attach_handle(task_id: str, handle: asyncio.Task):
+    """Keep a strong reference to the worker task.
+
+    Two reasons: (1) fire-and-forget asyncio tasks can be garbage collected
+    mid-flight, (2) 取消需要持有句柄才能真的中断上游 HTTP 请求。
+    """
+    task = _tasks.get(task_id)
+    if task:
+        task.handle = handle
+
+
+def cancel_task(task_id: str) -> bool:
+    """Request cancellation of a running task. Returns False if already finished."""
+    task = get_task(task_id)
+    if not task:
+        return False
+    if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+        return False
+    handle = task.handle
+    if handle and not handle.done():
+        handle.cancel()
+        return True
+    # No live handle — persist cancelled so pollers stop waiting.
+    task.status = TaskStatus.CANCELLED
+    task.error = "已取消"
+    task.completed_at = datetime.now().isoformat()
+    with database() as connection:
+        _save(connection, task)
+    return True

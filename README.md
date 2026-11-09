@@ -31,7 +31,7 @@ Infinite 前端、可选 Canvas Agent、代理和节点插件源码已合并到�
 | ≤ 1,572,864（约 1.57MP，1K） | openai-hk | 约 0.08 元/张 |
 | > 1,572,864 | Packy | 按量，贵 |
 
-不要为了 2K/4K 走 openai-hk：它所谓 4K 是假象，实测约 **1.57MP**（例如 3808×1632 → 1916×821）。超宽图像素卡在 1.57MP 时，长边仍可能 **>1920**（例如 2272×752），所以路由与监测都按总像素判断，不以长边 1920 分流。
+不要为了 2K/4K 走 openai-hk：它所谓 4K 是假象，实测约 **1.57MP**（例如 3808×1632 → 1916×821）。超宽图像素卡在 1.57MP 时，长边仍可能 **>1920**（例如 2272×752），所以路由与监测都按总像素判断，不以长边 1920 分流。`size=auto` 且无参考图的文生图固定走 openai-hk，不依赖 1024 回落。
 
 可选模式 `openai_first`（**不是默认**，不要轻易开）：先 openai-hk，API 失败再同请求走 packy。若请求总像素 >1,572,864 但返回像素 ≤1.7MP（保留原监测容差），连续 5 次会自动切回 `size_split`。
 
@@ -152,8 +152,10 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
   }'
 # → {"task_id":"...","images":[]}
 
-# 轮询（pending → running → completed / failed）
+# 轮询（pending → running → completed / failed / cancelled）
 curl -s http://127.0.0.1:8080/api/v1/tasks/<task_id>
+# 取消（中断上游 HTTP，避免继续计费）
+curl -s -X POST http://127.0.0.1:8080/api/v1/tasks/<task_id>/cancel
 ```
 
 图生图（参考图 base64 **不要**带 `data:` 前缀）：
@@ -175,6 +177,7 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/gpt-route` | 当前 GPT 路由模式与费用文案 |
+| POST | `/api/v1/tasks/{id}/cancel` | 取消运行中任务并断开上游连接 |
 | GET | `/api/v1/gallery` | 图库列表（`limit`≤200） |
 | GET/DELETE | `/api/v1/gallery/{id}` | 单条 |
 | POST | `/api/v1/gallery/batch-delete` | `{"ids":["..."]}` |
@@ -266,7 +269,7 @@ venv/bin/python scripts/build_infinite.py
 
 Canvas Agent 和本地代理按需单独运行。使用仓库内的 Agent 版本时，从仓库根目录执行 `cd infinite/canvas-agent && npm ci && npm run build && npm start`，连接与配置说明见 [Canvas Agent README](infinite/canvas-agent/README.md)。已有独立安装的 Agent 可继续运行；合并源码不会自动替换本机服务或迁移 `~/.infinite-canvas/` 配置与对话数据。
 
-Infinite 自动加载本服务的图片模型并调用原异步任务接口；GPT 图片请求继续使用已有 openai-hk/Packy 双来源自动路由，浏览器只显示一个「本机生图服务」，无需填写默认渠道或复制供应商密钥。当前没有配置文本、音频或视频服务，不会自动注册这些模型和渠道；如需使用，应自行配置具备对应权限的渠道。取消前端查询不会取消已提交的付费上游任务。
+Infinite 自动加载本服务的图片模型并调用原异步任务接口；GPT 图片请求继续使用已有 openai-hk/Packy 双来源自动路由，浏览器只显示一个「本机生图服务」，无需填写默认渠道或复制供应商密钥。当前没有配置文本、音频或视频服务，不会自动注册这些模型和渠道；如需使用，应自行配置具备对应权限的渠道。画布停止生成或中止轮询会 `POST /api/v1/tasks/{id}/cancel`，取消 asyncio worker 并关闭上游 HTTP 连接，避免继续计费；cancelled 任务不写图库。read 超时按长边分级：≤2048 → 360s，>2048 → 600s，超时后 `model=auto` 可回切 Packy。
 
 Infinite 图片节点和生图工作台会在提交前保存请求标识，刷新后取回原任务；提交响应丢失时先按标识查回任务，不自动重提。工作台批量结果恢复到同一条历史记录，查询中断后的重试取回原结果；本地结果缓存丢失时也可从原任务修复。任务结果和提交去重记录保存在 `data/tasks/tasks.sqlite3`，可用 `TASK_DATA_DIR` 调整目录；服务按单个 Uvicorn worker 部署。已完成结果重启后可查；重启中断的任务会显示明确失败，不会自动再付费生成。
 

@@ -39,6 +39,32 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("image-01", [item["name"] for item in models])
         self.assertTrue(all(item["capability"] == "image" for item in models))
 
+    async def test_env_text_models_are_advertised_without_leaking_keys(self):
+        with patch("image_api.api.infinite.settings") as config:
+            config.openai_api_key = "image-secret"
+            config.packy_api_key = None
+            config.minimax_api_key = None
+            config.text_api_key = "text-secret"
+            config.text_model = "gpt-5.4, gpt-5.4-mini"
+            response = await self.client.get("/api/v1/infinite/config")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("text-secret", response.text)
+        self.assertNotIn("image-secret", response.text)
+        self.assertEqual(response.json()["provider_models"], [
+            {"name": "gpt-5.4", "label": "gpt-5.4", "capability": "text"},
+            {"name": "gpt-5.4-mini", "label": "gpt-5.4-mini", "capability": "text"},
+        ])
+        self.assertEqual(response.json()["text_api_format"], "chat-completions")
+
+    async def test_image_key_alone_does_not_advertise_text_models(self):
+        with patch("image_api.api.infinite.settings") as config:
+            config.openai_api_key = "image-secret"
+            config.packy_api_key = None
+            config.minimax_api_key = None
+            config.text_api_key = None
+            config.text_model = "gpt-5.4"
+            self.assertEqual((await self.client.get("/api/v1/infinite/config")).json()["provider_models"], [])
+
     async def test_provider_resolution_keeps_references_and_request_identity(self):
         for model, provider in [("gpt-image-2.5-flare", "auto"), ("gemini-3.1-flash-image-preview", "gemini"), ("image-01", "minimax")]:
             with self.subTest(model=model), patch("image_api.api.infinite.generate", new_callable=AsyncMock) as generate:
@@ -185,6 +211,44 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(seen[0].url), "https://provider.test/v1/chat/completions")
         self.assertEqual(seen[0].headers["authorization"], "Bearer server-only-secret")
         self.assertNotIn("server-only-secret", response.text)
+        self.assertTrue(proxy.is_closed)
+
+    async def test_text_env_credentials_override_image_openai_key(self):
+        seen = []
+
+        async def upstream(request):
+            seen.append(request)
+            return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"{}")
+
+        proxy = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        with patch("image_api.api.infinite_provider.httpx.AsyncClient", return_value=proxy), patch("image_api.api.infinite_provider.settings") as config:
+            config.openai_api_key = "image-secret"
+            config.openai_base_url = "https://image.test/v1"
+            config.text_api_key = "text-secret"
+            config.text_base_url = "https://text.test/v1"
+            response = await self.client.post("/api/v1/infinite/openai/v1/chat/completions", json={"model": "gpt-5.4"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(str(seen[0].url), "https://text.test/v1/chat/completions")
+        self.assertEqual(seen[0].headers["authorization"], "Bearer text-secret")
+        self.assertNotIn("text-secret", response.text)
+        self.assertTrue(proxy.is_closed)
+
+    async def test_text_base_without_v1_is_prefixed(self):
+        seen = []
+
+        async def upstream(request):
+            seen.append(request)
+            return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"{}")
+
+        proxy = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        with patch("image_api.api.infinite_provider.httpx.AsyncClient", return_value=proxy), patch("image_api.api.infinite_provider.settings") as config:
+            config.openai_api_key = "image-secret"
+            config.openai_base_url = "https://image.test/v1"
+            config.text_api_key = "text-secret"
+            config.text_base_url = "https://cf.api.fan"
+            response = await self.client.post("/api/v1/infinite/openai/v1/chat/completions", json={"model": "deepseek-flash"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(str(seen[0].url), "https://cf.api.fan/v1/chat/completions")
         self.assertTrue(proxy.is_closed)
 
     async def test_proxy_rejects_arbitrary_endpoints_and_missing_credentials(self):

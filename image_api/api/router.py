@@ -6,7 +6,9 @@ import hashlib
 import base64
 from datetime import date
 
-from image_api.services.openai_img import generate_openai_image
+from image_api.services.openai_img import (
+    generate_openai_image, APIResponseError, UserFacingError, user_facing_message,
+)
 from image_api.services.gpt_route import (
     resolve_gpt_route, note_openai_output, route_status, is_retryable_sub,
 )
@@ -14,7 +16,7 @@ from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
 from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch, count_images, save_generation_inputs, reference_path
 from image_api.services.tasks import (
-    reserve_task, get_task, update_task, get_submission, TaskStatus
+    reserve_task, get_task, update_task, attach_handle, cancel_task, get_submission, TaskStatus
 )
 from image_api.services.log_helper import log_info, log_warn, log_error, read_logs, clear_logs
 from image_api.config import settings
@@ -148,8 +150,9 @@ async def generate(request: GenerateRequest):
 
     if request.client_request_id:
         _submissions[request.client_request_id] = (fingerprint, task_id)
-    # Kick off background generation — fire and forget
-    asyncio.create_task(_run_generation(task_id, request))
+    # Kick off background generation. 句柄存进任务表：既是强引用（避免被 GC），
+    # 也让 /tasks/{id}/cancel 能真的中断上游请求。
+    attach_handle(task_id, asyncio.create_task(_run_generation(task_id, request)))
 
     return GenerateResponse(task_id=task_id, images=[])
 
@@ -210,11 +213,17 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             first_b64 = request.image_base64s[0]
         elif request.image_base64:
             first_b64 = request.image_base64
+        has_reference = bool(
+            first_b64 or request.image_url or request.image_urls
+        )
 
-        # GPT 自动路由：默认按请求总像素分流；可选 openai_first 保留输出不足监测。
-        # 显式 openai/packy 仍可强制指定。
+        # GPT 自动路由：size_split 下 1K→openai-hk / 以上→packy。
+        # 无参考图 + size=auto 固定 openai-hk。显式 openai/packy 仍可强制指定。
         if request.model == "auto":
-            provider, sub = resolve_gpt_route(request.size, request.sub_model, first_b64)
+            provider, sub = resolve_gpt_route(
+                request.size, request.sub_model, first_b64,
+                has_reference=has_reference,
+            )
             request.model = provider
             request.sub_model = sub
             update_task(task_id, model=provider, sub_model=sub)
@@ -233,7 +242,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             try:
                 result = await _call_gpt_provider(request, request.model, task_id)
             except Exception as e:
-                if not allow_packy_retry:
+                if not allow_packy_retry or isinstance(e, UserFacingError):
                     raise
                 log_warn(f"openai-hk 失败，改走 packy 重试: {e}", ctx={
                     "task_id": task_id,
@@ -345,9 +354,24 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             completed_at=datetime.now().isoformat(),
         )
 
+    except asyncio.CancelledError:
+        # 用户取消：上游 HTTP 请求已在 httpx 的 async context 退出时断开，
+        # 这里只负责把任务标成 cancelled，且绝不保存到图库。
+        log_warn("生成任务已取消（已中断上游请求）", ctx={
+            "task_id": task_id,
+            "model": request.model,
+            "sub_model": request.sub_model,
+        })
+        update_task(
+            task_id,
+            status=TaskStatus.CANCELLED,
+            error="已取消",
+            completed_at=datetime.now().isoformat(),
+        )
+        raise
+
     except Exception as e:
         import traceback
-        from image_api.services.openai_img import APIResponseError
         raw = None
         if isinstance(e, APIResponseError):
             raw = e.raw_body
@@ -361,7 +385,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         update_task(
             task_id,
             status=TaskStatus.FAILED,
-            error=f"{tb_summary}\n{full_tb}",
+            error=user_facing_message(e),
             raw_response=raw,
             completed_at=datetime.now().isoformat(),
         )
@@ -373,12 +397,31 @@ async def gpt_route_status():
     return route_status()
 
 
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_generation(task_id: str):
+    """Cancel a running generation.
+
+    Cancels the worker asyncio task, which unwinds the pending httpx request —
+    the TCP connection is closed, so the upstream stops generating instead of
+    running to completion (and billing) after the user hit 停止.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if not cancel_task(task_id):
+        return {"task_id": task_id, "cancelled": False, "status": task.status.value}
+
+    log_info("收到取消请求，已中断上游请求", ctx={"task_id": task_id})
+    return {"task_id": task_id, "cancelled": True, "status": "cancelled"}
+
+
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """Poll task status and return results when ready."""
     task = get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     return TaskStatusResponse(
         task_id=task.id,
@@ -443,7 +486,7 @@ def get_gallery_reference(filename: str):
 async def get_gallery_image(record_id: str):
     rec = get_image(record_id)
     if not rec:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="图片不存在")
     return rec
 
 
@@ -451,7 +494,7 @@ async def get_gallery_image(record_id: str):
 async def delete_gallery_image(record_id: str):
     deleted = delete_image(record_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="图片不存在")
     return {"ok": True}
 
 
@@ -519,7 +562,7 @@ async def optimize_prompt(request: OptimizePromptRequest):
             return {"optimized_prompt": data.get("optimized_prompt", request.prompt)}
     except Exception as e:
         log_warn(f"Prompt优化代理失败: {e}")
-        raise HTTPException(status_code=502, detail=f"Prompt optimization unavailable: {e}")
+        raise HTTPException(status_code=502, detail="提示词优化暂时不可用，请稍后重试。")
 
 
 # ─── Logs endpoints ────────────────────────────────────────────────────

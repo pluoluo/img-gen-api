@@ -79,19 +79,23 @@ test("a failed task reports the server error without resubmitting", async () => 
 
 test("a missing task after service restart never creates a replacement", async () => {
     let count = 0;
-    globalThis.fetch = (async () => (++count === 1 ? Response.json({ task_id: "lost" }) : Response.json({ detail: "Task not found" }, { status: 404 }))) as typeof fetch;
-    await expect(requestImageApi(input, new AbortController().signal)).rejects.toThrow("Task not found");
+    globalThis.fetch = (async () => (++count === 1 ? Response.json({ task_id: "lost" }) : Response.json({ detail: "任务不存在" }, { status: 404 }))) as typeof fetch;
+    await expect(requestImageApi(input, new AbortController().signal)).rejects.toThrow("任务不存在");
     expect(count).toBe(2);
 });
 
-test("cancelling polling does not submit another generation", async () => {
-    let count = 0;
+test("cancelling polling cancels the upstream task and does not submit another generation", async () => {
+    const requests: { url: string; method: string }[] = [];
     const controller = new AbortController();
-    globalThis.fetch = (async () => {
-        if (++count === 1) return Response.json({ task_id: "running" });
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        const method = init?.method || "GET";
+        requests.push({ url, method });
+        if (method === "POST" && String(url).includes("/generate")) return Response.json({ task_id: "running" });
+        if (method === "POST" && String(url).includes("/cancel")) return Response.json({ cancelled: true, status: "cancelled" });
         controller.abort(new Error("cancelled"));
         return Response.json({ status: "running", images: [] });
     }) as typeof fetch;
     await expect(requestImageApi(input, controller.signal)).rejects.toThrow("cancelled");
-    expect(count).toBe(2);
+    expect(requests.filter((item) => item.url.includes("/generate")).length).toBe(1);
+    expect(requests.some((item) => item.method === "POST" && item.url === "/api/v1/tasks/running/cancel")).toBe(true);
 });
