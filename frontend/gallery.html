@@ -554,7 +554,7 @@ async function renderCard(item) {
   img.alt = truncatePrompt(item.prompt);
   img.loading = 'lazy';
 
-  const localSrc = `/gallery/${item.filename}`;
+  const localSrc = `/gallery/${item.filename}?original=1`;
   const thumbSrc = item.thumb_filename ? `/gallery/thumb/${item.thumb_filename}` : localSrc;
   const fallbackSrc = item.image_url || '';
 
@@ -733,7 +733,7 @@ function _renderModal() {
   }
   references.appendChild(strip);
 
-  const localSrc = `/gallery/${item.filename}`;
+  const localSrc = `/gallery/${item.filename}?original=1`;
   const fallbackSrc = item.image_url || '';
   const imgSrc = localSrc || fallbackSrc;
   modalImg.src = imgSrc;

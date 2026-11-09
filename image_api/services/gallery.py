@@ -107,8 +107,29 @@ def _record_inputs(record_id):
 
 def _save_image_file(base64_data: str) -> str:
     """Save base64 image to disk, return filename."""
-    img_bytes = base64.b64decode(base64_data)
-    fname = f"{uuid.uuid4().hex}.png"
+    return _save_image_bytes(base64.b64decode(base64_data))
+
+
+def image_mime_type(source) -> str:
+    """Read the actual format, including originals previously saved with a .png name."""
+    from PIL import Image, UnidentifiedImageError
+    from xml.etree import ElementTree
+    try:
+        with Image.open(io.BytesIO(source) if isinstance(source, bytes) else source) as image:
+            return Image.MIME.get(image.format, "application/octet-stream")
+    except (UnidentifiedImageError, OSError, ValueError):
+        try:
+            root = ElementTree.parse(io.BytesIO(source) if isinstance(source, bytes) else source).getroot()
+            if root.tag in ("{http://www.w3.org/2000/svg}svg", "svg"):
+                return "image/svg+xml"
+        except (ElementTree.ParseError, OSError, ValueError):
+            pass
+    return "application/octet-stream"
+
+
+def _save_image_bytes(img_bytes: bytes) -> str:
+    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg"}.get(image_mime_type(img_bytes), "png")
+    fname = f"{uuid.uuid4().hex}.{extension}"
     fpath = GALLERY_DIR / fname
     with open(fpath, "wb") as f:
         f.write(img_bytes)
@@ -188,10 +209,7 @@ async def save_image(
             from image_api.services.openai_img import _download_image
             try:
                 img_data = await _download_image(url)
-                fname = f"{uuid.uuid4().hex}.png"
-                fpath = GALLERY_DIR / fname
-                with open(fpath, "wb") as f:
-                    f.write(img_data)
+                fname = _save_image_bytes(img_data)
             except Exception:
                 fname = ""
         else:
@@ -262,14 +280,11 @@ def get_images(limit: int = 50, offset: int = 0, keyword: str = "", start_date=N
     result = []
     for r in rows:
         rec = _row_to_dict(r)
-        # Ensure thumbnail exists for this image
-        thumb = get_thumbnail_path(rec["filename"])
-        if thumb:
-            rec["thumb_filename"] = thumb
+        # Preview GIF animation and SVG vectors directly, even if an old PNG thumb exists.
+        if image_mime_type(GALLERY_DIR / rec["filename"]) in ("image/gif", "image/svg+xml"):
+            rec["thumb_filename"] = None
         else:
-            # Try to generate on-demand (lazy generation)
-            generated = _generate_thumbnail(rec["filename"])
-            rec["thumb_filename"] = generated
+            rec["thumb_filename"] = get_thumbnail_path(rec["filename"]) or _generate_thumbnail(rec["filename"])
         result.append(rec)
     return result
 

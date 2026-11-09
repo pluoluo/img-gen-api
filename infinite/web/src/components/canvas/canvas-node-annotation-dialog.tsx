@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Button, Tooltip } from "antd";
-import { Eraser, Pencil, Redo2, Save, Square, Type, Undo2, X } from "lucide-react";
+import { Circle, Eraser, Pencil, Redo2, Save, Square, Type, Undo2, X } from "lucide-react";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 type Point = { x: number; y: number };
-type Tool = "pen" | "rectangle" | "eraser" | "text";
+type Tool = "pen" | "rectangle" | "ellipse" | "eraser" | "text";
 type Mark = { tool: Tool; color: string; width: number; points: Point[]; text?: string };
 type TextDraft = Point & { value: string; color: string; width: number };
 
@@ -39,6 +39,10 @@ function paint(canvas: HTMLCanvasElement, marks: Mark[]) {
             (mark.text || "").split("\n").forEach((line, i) => ctx.fillText(line, first.x, first.y + i * mark.width * 1.3));
         } else if (mark.tool === "rectangle") {
             ctx.strokeRect(first.x, first.y, last.x - first.x, last.y - first.y);
+        } else if (mark.tool === "ellipse") {
+            ctx.beginPath();
+            ctx.ellipse((first.x + last.x) / 2, (first.y + last.y) / 2, Math.abs(last.x - first.x) / 2, Math.abs(last.y - first.y) / 2, 0, 0, Math.PI * 2);
+            ctx.stroke();
         } else {
             ctx.beginPath();
             ctx.moveTo(first.x, first.y);
@@ -195,13 +199,22 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
         const stroke = strokeRef.current;
         if (!stroke) return;
         const p = point(event);
-        if (stroke.tool === "rectangle") stroke.points = [stroke.points[0], p];
+        if (stroke.tool === "ellipse" && event.shiftKey) {
+            const first = stroke.points[0];
+            const dx = p.x - first.x;
+            const dy = p.y - first.y;
+            const size = Math.max(Math.abs(dx), Math.abs(dy));
+            p.x = first.x + (dx < 0 ? -size : size);
+            p.y = first.y + (dy < 0 ? -size : size);
+        }
+        if (stroke.tool === "rectangle" || stroke.tool === "ellipse") stroke.points = [stroke.points[0], p];
         else stroke.points.push(p);
         paint(event.currentTarget, [...marks, stroke]);
     };
     const finish = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         if (!strokeRef.current) return;
         const stroke = strokeRef.current;
+        if (stroke.tool === "ellipse" && event.type === "pointerup") move(event);
         if (event.type !== "pointercancel") {
             setMarks((prev) => [...prev, stroke]);
             setRedo([]);
@@ -238,6 +251,7 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
     const tools = [
         { id: "pen", label: "画笔", icon: Pencil },
         { id: "rectangle", label: "矩形", icon: Square },
+        { id: "ellipse", label: "圆形 / 椭圆", icon: Circle },
         { id: "eraser", label: "橡皮", icon: Eraser },
         { id: "text", label: "文字", icon: Type },
     ] as const;
@@ -260,7 +274,7 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
                     <Button type="text" aria-label="取消标注" disabled={saving} icon={<X size={18} />} onClick={onClose} />
                 </Tooltip>
                 {tools.map(({ id, label, icon: Icon }) => (
-                    <Tooltip key={id} title={label}>
+                    <Tooltip key={id} title={id === "ellipse" ? "圆形 / 椭圆（按住 Shift 画正圆）" : label}>
                         <Button
                             type={tool === id ? "default" : "text"}
                             aria-label={label}
@@ -361,7 +375,15 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
                 )}
             </div>
             <div className="min-h-6 pt-2 text-center text-xs" style={{ color: theme.node.muted }}>
-                {error ? <span role="alert">{error}</span> : tool === "text" ? "点击图片添加文字，点击空白处完成；保存透明标注层，保留原图" : "保存透明标注层，生成时原图与标注分开提交 · Esc 取消"}
+                {error ? (
+                    <span role="alert">{error}</span>
+                ) : tool === "text" ? (
+                    "点击图片添加文字，点击空白处完成；保存透明标注层，保留原图"
+                ) : tool === "ellipse" ? (
+                    "拖动绘制椭圆，按住 Shift 画正圆 · Esc 取消"
+                ) : (
+                    "保存透明标注层，生成时原图与标注分开提交 · Esc 取消"
+                )}
             </div>
         </div>,
         document.body,

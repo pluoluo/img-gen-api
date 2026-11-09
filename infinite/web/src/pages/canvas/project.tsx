@@ -138,6 +138,7 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const CANVAS_CLIPBOARD_TYPE = "application/x-infinite-canvas-nodes";
 
 function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: CanvasNodeData["metadata"] = {}): CanvasNodeData {
     const videoSize = fitNodeSize(video.width || item.width, video.height || item.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
@@ -192,7 +193,7 @@ function InfiniteCanvasPage() {
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
-    const clipboardRef = useRef<CanvasClipboard | null>(null);
+    const clipboardRef = useRef<(CanvasClipboard & { id: string }) | null>(null);
     const historyRef = useRef<{ past: CanvasHistoryEntry[]; future: CanvasHistoryEntry[] }>({ past: [], future: [] });
     const lastHistoryRef = useRef<CanvasHistoryEntry | null>(null);
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1190,6 +1191,7 @@ function InfiniteCanvasPage() {
         if (!copiedNodes.length) return;
 
         clipboardRef.current = {
+            id: nanoid(),
             nodes: copiedNodes,
             connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
         };
@@ -1732,24 +1734,49 @@ function InfiniteCanvasPage() {
         [getCanvasCenter, t],
     );
 
-    const pasteSystemClipboard = useCallback(async () => {
-        if (!navigator.clipboard) return;
-
-        const items = await navigator.clipboard.read();
-        const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
-        if (imageItem) {
-            const imageType = imageItem.types.find((type) => type.startsWith("image/"));
-            if (!imageType) return;
-            const blob = await imageItem.getType(imageType);
-            const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
-            message.success(t("canvas.projectPage.clipboardImageAdded"));
-            return;
-        }
-
-        const text = await navigator.clipboard.readText();
-        if (createTextNodeFromClipboard(text)) message.success(t("canvas.projectPage.clipboardTextAdded"));
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
+    useEffect(() => {
+        const ignoreClipboard = (event: ClipboardEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            return event.defaultPrevented || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [data-canvas-no-zoom], [data-canvas-shortcuts-ignore], [role='dialog']");
+        };
+        const handleCopy = (event: ClipboardEvent) => {
+            if (ignoreClipboard(event) || !event.clipboardData || !selectedNodeIdsRef.current.size || window.getSelection()?.toString()) return;
+            copySelectedNodes();
+            if (!clipboardRef.current) return;
+            event.clipboardData.setData(CANVAS_CLIPBOARD_TYPE, clipboardRef.current.id);
+            event.preventDefault();
+        };
+        const handlePaste = (event: ClipboardEvent) => {
+            if (ignoreClipboard(event) || !event.clipboardData) return;
+            const data = event.clipboardData;
+            const images = Array.from(data.files).filter((file) => file.type.startsWith("image/"));
+            if (images.length) {
+                event.preventDefault();
+                const center = getCanvasCenter();
+                void (async () => {
+                    try {
+                        for (const [index, file] of images.entries()) {
+                            await createImageFileNode(file, { x: center.x + index * 36, y: center.y + index * 36 });
+                        }
+                        message.success(t("canvas.projectPage.clipboardImageAdded"));
+                    } catch (error) {
+                        message.error(error instanceof Error ? error.message : t("common.imageReadFailed"));
+                    }
+                })();
+            } else if (data.getData(CANVAS_CLIPBOARD_TYPE) === clipboardRef.current?.id && pasteCopiedNodes()) {
+                event.preventDefault();
+            } else if (createTextNodeFromClipboard(data.getData("text/plain"))) {
+                event.preventDefault();
+                message.success(t("canvas.projectPage.clipboardTextAdded"));
+            }
+        };
+        window.addEventListener("copy", handleCopy);
+        window.addEventListener("paste", handlePaste);
+        return () => {
+            window.removeEventListener("copy", handleCopy);
+            window.removeEventListener("paste", handlePaste);
+        };
+    }, [copySelectedNodes, createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, pasteCopiedNodes, t]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -1758,8 +1785,6 @@ function InfiniteCanvasPage() {
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
-
-            if (isModifierShortcut && key === "c" && window.getSelection()?.toString()) return;
 
             if (isModifierShortcut && !event.altKey && key === "z") {
                 event.preventDefault();
@@ -1799,18 +1824,6 @@ function InfiniteCanvasPage() {
                 return;
             }
 
-            if (isModifierShortcut && !event.altKey && key === "c") {
-                event.preventDefault();
-                copySelectedNodes();
-                return;
-            }
-
-            if (isModifierShortcut && !event.altKey && key === "v") {
-                event.preventDefault();
-                if (!pasteCopiedNodes()) void pasteSystemClipboard();
-                return;
-            }
-
             if (event.key === "Delete" || event.key === "Backspace") {
                 if (selectedNodeIdsRef.current.size) {
                     deleteNodes(new Set(selectedNodeIdsRef.current));
@@ -1838,7 +1851,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
+    }, [deleteConnection, deleteNodes, groupSelection, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -1973,13 +1986,13 @@ function InfiniteCanvasPage() {
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
+        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content, node.metadata.mimeType)}`);
     }, []);
 
     const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
         const image = node.metadata?.images?.find((item) => item.id === imageId);
         if (!image?.content) return;
-        saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content)}`);
+        saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.content, image.mimeType)}`);
     }, []);
 
     const captureVideoNodeFrame = useCallback(

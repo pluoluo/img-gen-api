@@ -124,11 +124,11 @@ def logs_page():
 def serve_gallery_image(filename: str):
     from starlette.responses import FileResponse
     import os.path
-    from image_api.services.gallery import GALLERY_DIR
+    from image_api.services.gallery import GALLERY_DIR, image_mime_type
     fpath = GALLERY_DIR / filename
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(fpath, media_type="image/png", headers={"Cache-Control": "public, max-age=604800, immutable"})
+    return FileResponse(fpath, media_type=image_mime_type(fpath), headers={"Cache-Control": "public, max-age=604800, immutable"})
 
 
 @app.get("/gallery/thumb/{filename}")

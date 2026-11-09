@@ -11,8 +11,10 @@ import type { ImageApiMask } from "@/services/api/image-api";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
-export function imageExtension(dataUrl: string) {
-    return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
+export function imageExtension(url: string, mimeType?: string) {
+    const type = (url.match(/^data:(image\/[^;,]+)/i)?.[1] || mimeType || "").split(";")[0].trim().toLowerCase();
+    const extensions: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg" };
+    return extensions[type] || "png";
 }
 
 export function audioExtension(mimeType?: string) {

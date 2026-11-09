@@ -125,7 +125,7 @@ function ImageSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" quickCount={4} />
             <div className="mt-4 border-t pt-3" style={{ borderColor: theme.toolbar.border }}>
                 <Button type="text" onClick={saveDefaults}>{t("canvas.imageTools.saveDefaults")}</Button>
                 <p className="mt-1 text-xs" style={{ color: theme.node.muted }}>{t("canvas.imageTools.defaultsHint")}</p>

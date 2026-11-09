@@ -197,10 +197,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.count")}</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
+                    <div className={quickCount === 4 ? "grid grid-cols-6 gap-2" : "grid grid-cols-4 gap-2.5"}>
                         {Array.from({ length: quickCount }, (_, index) => index + 1).map((value) => (
                             <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                {t("settingsPanels.image.images", { count: value })}
+                                {quickCount === 4 ? value : t("settingsPanels.image.images", { count: value })}
                             </OptionPill>
                         ))}
                         <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
@@ -287,6 +287,7 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
         <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
                 type="number"
+                aria-label={i18n.t("settingsPanels.image.count")}
                 min={1}
                 max={max}
                 className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"

@@ -215,7 +215,7 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
     await runWithConcurrency(tasks, FILE_CONCURRENCY, async (remoteFile) => {
         const blob = await downloadWebdavFile(config, remoteFile.path);
         if (!blob) return;
-        const typedBlob = blob.type ? blob : blob.slice(0, blob.size, remoteFile.mimeType);
+        const typedBlob = blob.slice(0, blob.size, remoteFile.mimeType || blob.type);
         await (remoteFile.storageKey.startsWith("image:") ? setImageBlob(remoteFile.storageKey, typedBlob) : setMediaBlob(remoteFile.storageKey, typedBlob));
         downloaded += 1;
         emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "下载媒体", current: downloaded, total: tasks.length, status: "active" });
@@ -379,6 +379,7 @@ function safeFileName(value: string) {
 }
 
 function fileExtension(mimeType: string, storageKey: string) {
+    if (mimeType.includes("svg")) return "svg";
     if (mimeType.includes("png")) return "png";
     if (mimeType.includes("jpeg")) return "jpg";
     if (mimeType.includes("webp")) return "webp";
