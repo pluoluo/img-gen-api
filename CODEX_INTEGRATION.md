@@ -79,7 +79,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `model` | string | 否 | 供应商：`auto`（默认，按尺寸分流：1K→openai-hk / 以上→packy）/ `openai` / `packy` / `gemini` / `minimax`。前端隐藏服务商，GPT 系列请传 `auto` |
-| `sub_model` | string | 否 | 具体模型，见下方「模型矩阵」，默认 `auto`。GPT 系列可选 `auto` / `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`（只传基础名，不带 `-2k/-4k`） |
+| `sub_model` | string | 否 | 具体模型，见下方「模型矩阵」，默认 `gpt-image-2.6-flare`。GPT 系列可选 `gpt-image-2.6` / `-flare` / `-sunburst` 及对应 2.5 名称（只传基础名，不带 `-2k/-4k`） |
 | `prompt` | string | **是** | 提示词 |
 | `image_url` | string | 否 | 单张参考图 URL（图生图） |
 | `image_base64` | string | 否 | 单张参考图 base64（**不含 `data:` 前缀**，纯 base64 字符串） |
@@ -168,9 +168,9 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 
 | `model` | `sub_model` | 供应商/端点 | 备注 |
 |---|---|---|---|
-| `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | 按尺寸分流 | **1K（长边 ≤ 1920）→ openai-hk（约 0.08）**；**以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），不要为了 2K/4K 走 openai-hk |
-| `openai` | `gpt-image-2.5` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | open-hk `api.openai-hk.com/v1` | 强制走 openai-hk。大小同价约 0.08；不走 packy 重试 |
-| `packy` | `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | PackyAPI `cf.api.fan/v1` | 强制走 packy。按量计费；走 **image 分组**，多参考图用 `image[]` |
+| `auto`（默认） | `gpt-image-2.6-flare`（默认）/ `gpt-image-2.6-sunburst` / `gpt-image-2.6`；2.5 同名仍可选 | 按尺寸分流 | **1K（总像素 ≤ 1,572,864）→ openai-hk（约 0.08）**；**以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），不要为了 2K/4K 走 openai-hk |
+| `openai` | 同上 | open-hk `api.openai-hk.com/v1` | 强制走 openai-hk。大小同价约 0.08；不走 packy 重试 |
+| `packy` | `gpt-image-2.6-flare` / `gpt-image-2.6-sunburst`（2.5 同名仍可用） | PackyAPI `cf.api.fan/v1` | 强制走 packy。按量计费；走 **image 分组**，多参考图用 `image[]` |
 | `gemini` | `gemini-3.1-flash-image-preview` / `-2k` / `-4k` | 经 open-hk OpenAI 兼容接口转发 | 标准 / 2K / 4K |
 | `gemini` | `gemini-3.1-flash-lite-preview` | Gemini 原生端点（`generativelanguage.googleapis.com/v1beta`） | 走 `gemini_api_key`，单参考图 |
 | `minimax` | `image-01`（服务端固定） | MiniMax `api.minimaxi.com/v1/image_generation` | 单参考图；`size` 映射为宽高比 |
@@ -179,7 +179,7 @@ POST /api/v1/optimize-prompt   {"prompt": "..."}
 - **默认 `size_split`：1K（长边 ≤ 1920）→ openai-hk，约 0.08 元/张；以上 → packy 按量**。openai-hk 不能真出 4K（实测约 1.57MP），超宽图像素卡在 1.57MP 时长边仍可能 >1920；
 - 可选 `openai_first`（非默认）：先 openai-hk，API 失败再 packy。监测：请求 >1K 但返回长边 ≤1920 **或** 像素 ≤1.7MP，连续 5 次切回 `size_split`。状态见 `GET /api/v1/gpt-route`；
 - 显式 `openai`/`packy` 强制该提供商，不做分流/重试；
-- `gpt-image-2` 已下线（传入会被映射到 `gpt-image-2.5-flare`）；
+- `gpt-image-2` 已下线（传入会被映射到 `gpt-image-2.6-flare`）；
 - 传基础名即可；显式 `-2k/-4k` 后缀仍会被 `_normalize_model25()` 归一。
 
 **尺寸合规约束（服务端自动调整，客户端传任意 WxH 即可）：**
@@ -263,7 +263,7 @@ def generate_image(prompt: str, model="auto", sub_model="auto",
 9. **图生图要求**：参考图 base64 必须是 PNG/JPEG 解码后的原始 base64；尺寸合规由服务端自动处理，客户端传 `auto` 或期望宽度即可。
 10. **运维操作在 NAS 上做**：改代码后重启服务用 `systemctl --user restart image-api.service`；看日志用 `tail -30 /tmp/image-api.log`（不是 journalctl）——这些都需要 SSH 登录 NAS 执行，Windows 客户端只需调 API。
 11. **Windows 上验证连通**：`curl http://10.40.92.99:8080/health` 返回 `{"status":"healthy"}` 即正常。
-12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.5-flare`（或 sunburst）即可。默认按总像素分流：1K→openai-hk，以上→packy。`size=auto` 且无参考图固定 openai-hk。风格可选 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`。
+12. **GPT 默认 auto**：`model=auto`、`sub_model=gpt-image-2.6-flare`（或 sunburst）即可，2.5 同名仍可选。默认按总像素分流：1K→openai-hk，以上→packy。`size=auto` 且无参考图固定 openai-hk。
 13. **费用**：1K 走 openai-hk 约 0.08 元/张；1K 以上走 packy 按量。不要写死「大小同价」。当前文案以 `GET /api/v1/gpt-route` 为准。
 
 ---

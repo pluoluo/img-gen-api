@@ -653,7 +653,7 @@ def validate_image_pixels(image_base64: str) -> dict:
 
 async def generate_openai_image(
     prompt: str,
-    model: str = "gpt-image-2.5",
+    model: str = "gpt-image-2.6-flare",
     image_url: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_urls: Optional[List[str]] = None,
@@ -680,11 +680,11 @@ async def generate_openai_image(
         effective_base_url = base_url or settings.openai_base_url
         effective_api_key = api_key or settings.openai_api_key
 
-        # 2.5 显式变体名(-2k/-4k)归一为基础名：服务商网关按 size 自动路由内部渠道
-        model = _normalize_model25(model)
-
         # Determine proxy: use per-call base_url to detect PackyAPI
         is_packy = _is_packy(effective_base_url)
+        from image_api.services.gpt_route import normalize_sub
+        # 2.5/2.6 显式 -2k/-4k 归一为基础名；openai-hk 发 2.6，Packy 留 2.5
+        model = normalize_sub(model, for_packy=is_packy)
         proxy = settings.packy_proxy if is_packy else None
         if proxy:
             log_info(f"PackyAPI 使用代理: {proxy}")

@@ -52,6 +52,8 @@ class GptRouteTests(unittest.TestCase):
         self.assertEqual((p, sub), ("openai", "gpt-image-2.5-sunburst"))
         p, sub = self.gr.resolve_gpt_route("1024x1024", "gpt-image-2.5-flare")
         self.assertEqual((p, sub), ("openai", "gpt-image-2.5-flare"))
+        p, sub = self.gr.resolve_gpt_route("1024x1024", "gpt-image-2.6-flare")
+        self.assertEqual((p, sub), ("openai", "gpt-image-2.6-flare"))
 
     def test_size_split_uses_total_pixel_boundary(self):
         self.gr.save_state({
@@ -60,11 +62,11 @@ class GptRouteTests(unittest.TestCase):
             "reverted_at": "x",
         })
         p, sub = self.gr.resolve_gpt_route("2048x768", "gpt-image-2.5-flare")
-        self.assertEqual(p, "openai")
-        p, sub = self.gr.resolve_gpt_route("2048x784", "gpt-image-2.5-flare")
-        self.assertEqual(p, "packy")
+        self.assertEqual((p, sub), ("openai", "gpt-image-2.5-flare"))
+        p, sub = self.gr.resolve_gpt_route("2048x784", "gpt-image-2.6-flare")
+        self.assertEqual((p, sub), ("packy", "gpt-image-2.6-flare"))
         p, sub = self.gr.resolve_gpt_route("2560x1440", "gpt-image-2.5-flare")
-        self.assertEqual(p, "packy")
+        self.assertEqual((p, sub), ("packy", "gpt-image-2.5-flare"))
 
     def test_auto_size_no_ref_goes_openai(self):
         p, sub = self.gr.resolve_gpt_route("auto", "gpt-image-2.5-sunburst")
@@ -91,6 +93,17 @@ class GptRouteTests(unittest.TestCase):
         self._openai_first()
         p, _ = self.gr.resolve_gpt_route("auto", "gpt-image-2.5-flare")
         self.assertEqual(p, "openai")
+
+    def test_versions_are_preserved_except_packy_plain_names(self):
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.5-flare"), "gpt-image-2.5-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.6-flare"), "gpt-image-2.6-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.5-sunburst-4k"), "gpt-image-2.5-sunburst")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.6-flare-2k"), "gpt-image-2.6-flare")
+        self.assertEqual(self.gr.normalize_sub("auto"), "gpt-image-2.6-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.5", for_packy=True), "gpt-image-2.5-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.6", for_packy=True), "gpt-image-2.6-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.6-flare", for_packy=True), "gpt-image-2.6-flare")
+        self.assertEqual(self.gr.normalize_sub("gpt-image-2.5-flare", for_packy=True), "gpt-image-2.5-flare")
 
     def test_five_consecutive_undersize_reverts(self):
         self._openai_first()

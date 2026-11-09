@@ -35,6 +35,7 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private-openai-key", response.text)
         self.assertEqual(response.json()["provider_models"], [])
         models = response.json()["models"]
+        self.assertIn("gpt-image-2.6-flare", [item["name"] for item in models])
         self.assertIn("gpt-image-2.5-flare", [item["name"] for item in models])
         self.assertNotIn("image-01", [item["name"] for item in models])
         self.assertTrue(all(item["capability"] == "image" for item in models))

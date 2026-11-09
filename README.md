@@ -12,15 +12,15 @@ Infinite 前端、可选 Canvas Agent、代理和节点插件源码已合并到�
 
 | 提供商 | `model` | `sub_model` | 参考图 | 备注 |
 |--------|---------|-------------|--------|------|
-| GPT 自动路由 | `auto`（默认） | `gpt-image-2.5-flare`（默认）/ `gpt-image-2.5-sunburst` / `gpt-image-2.5` | ✅ 多图 | 见下方路由规则 |
+| GPT 自动路由 | `auto`（默认） | `gpt-image-2.6-flare`（默认）/ `gpt-image-2.6-sunburst` / `gpt-image-2.6`；仍可选 2.5 同名 | ✅ 多图 | 见下方路由规则 |
 | open-hk | `openai` | 同上 | ✅ 多图 | 强制 openai-hk，失败不转 packy |
-| PackyAPI | `packy` | `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | ✅ 多图（`image[]`） | 强制 packy，按量计费 |
+| PackyAPI | `packy` | `gpt-image-2.6-flare` / `gpt-image-2.6-sunburst`（2.5 同名仍可用） | ✅ 多图（`image[]`） | 强制 packy，按量计费 |
 | Gemini | `gemini` | `gemini-3.1-flash-image-preview` / `-2k` / `-4k` | ✅ | 经 open-hk 兼容接口 |
 | MiniMax | `minimax` | `image-01` | ✅ 单图 | `size` 映射为宽高比 |
 
 - 前端 GPT 系列只展示模型名，请求里 `model` 固定为 `auto`。
-- `gpt-image-2` 已下线，传入会映射到 `gpt-image-2.5-flare`。
-- 2.5 只发**基础名**（不要自己拼 `-2k`/`-4k`）。服务商按 `size` 分流内部渠道；显式后缀在 openai-hk 上可能变成 `flare-4k-4k` 并 503。
+- `gpt-image-2` 已下线，传入会映射到 `gpt-image-2.6-flare`。
+- 2.5 / 2.6 只发**基础名**（不要自己拼 `-2k`/`-4k`）。服务商按 `size` 分流内部渠道；显式后缀在 openai-hk 上可能变成 `flare-4k-4k` 并 503。
 
 ## GPT `model=auto` 路由
 

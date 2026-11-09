@@ -10,7 +10,7 @@ from image_api.services.openai_img import (
     generate_openai_image, APIResponseError, UserFacingError, user_facing_message,
 )
 from image_api.services.gpt_route import (
-    resolve_gpt_route, note_openai_output, route_status, is_retryable_sub,
+    resolve_gpt_route, note_openai_output, route_status, is_retryable_sub, normalize_sub,
 )
 from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
@@ -26,7 +26,7 @@ router = APIRouter()
 
 class GenerateRequest(BaseModel):
     model: str = "auto"
-    sub_model: str = "gpt-image-2.5-flare"
+    sub_model: str = "gpt-image-2.6-flare"
     prompt: str
     image_url: Optional[str] = None
     image_base64: Optional[str] = None
@@ -228,9 +228,10 @@ async def _run_generation(task_id: str, request: GenerateRequest):
             request.sub_model = sub
             update_task(task_id, model=provider, sub_model=sub)
             log_info("自动路由完成", ctx={"task_id": task_id, "model": provider, "sub_model": sub, "size": request.size})
-        elif request.sub_model == "gpt-image-2":
-            # gpt-image-2 已下线
-            request.sub_model = "gpt-image-2.5-flare"
+        elif request.model in ("openai", "packy"):
+            request.sub_model = normalize_sub(
+                request.sub_model, for_packy=request.model == "packy",
+            )
             update_task(task_id, sub_model=request.sub_model)
 
         if request.model in ("openai", "packy"):
@@ -250,6 +251,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                     "size": request.size,
                 })
                 request.model = "packy"
+                request.sub_model = normalize_sub(request.sub_model, for_packy=True)
                 update_task(task_id, model="packy", sub_model=request.sub_model)
                 result = await _call_gpt_provider(request, "packy", task_id)
             else:

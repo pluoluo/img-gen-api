@@ -1,4 +1,4 @@
-"""GPT 2.5 flare/sunburst routing + openai-hk undersize monitor.
+"""GPT 2.5/2.6 flare/sunburst routing + openai-hk undersize monitor.
 
 Default mode (size_split):
   total pixels ≤ 1,572,864 → openai-hk; larger → packy.
@@ -6,6 +6,10 @@ Default mode (size_split):
   must not depend on the 1024 fallback; a later default size
   change should still stay on openai-hk).
   openai-hk 4K is a false 1.57MP cap (confirmed 2026-09-23).
+
+Frontend and API default is gpt-image-2.6-flare; 2.5 names remain valid
+and are sent through unchanged. Strip -2k/-4k. Packy has no plain
+gpt-image-2.5 / gpt-image-2.6, those map to the flare variant.
 
 Optional mode (openai_first): openai-hk first, Packy on API failure.
 Reverts to size_split after 5 consecutive undersize >1K results
@@ -35,9 +39,12 @@ UNDERSUZE_STREAK_LIMIT = 5
 MODE_OPENAI_FIRST = "openai_first"
 MODE_SIZE_SPLIT = "size_split"
 
-RETRYABLE_SUBS = ("gpt-image-2.5-flare", "gpt-image-2.5-sunburst")
-_PACKY_DEFAULT_MODEL = "gpt-image-2.5-flare"
-_OPENAI_DEFAULT_MODEL = "gpt-image-2.5-flare"
+RETRYABLE_SUBS = (
+    "gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
+    "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+)
+_PACKY_DEFAULT_MODEL = "gpt-image-2.6-flare"
+_OPENAI_DEFAULT_MODEL = "gpt-image-2.6-flare"
 
 HINT_OPENAI_FIRST = (
     "<b>Flare 主打速度</b>　·　大小同价　·　约 0.08 元/张　　"
@@ -110,16 +117,24 @@ def current_mode() -> str:
 
 
 def is_retryable_sub(sub_model: str) -> bool:
-    return normalize_sub(sub_model) in RETRYABLE_SUBS
+    return _strip_size_variant((sub_model or "").strip()) in RETRYABLE_SUBS
+
+
+def _strip_size_variant(sub: str) -> str:
+    if sub.startswith("gpt-image-") and (sub.endswith("-2k") or sub.endswith("-4k")):
+        return sub[:-3]
+    return sub
 
 
 def normalize_sub(sub_model: str, *, for_packy: bool = False) -> str:
-    sub = (sub_model or _OPENAI_DEFAULT_MODEL).strip() or _OPENAI_DEFAULT_MODEL
+    default = _PACKY_DEFAULT_MODEL if for_packy else _OPENAI_DEFAULT_MODEL
+    sub = _strip_size_variant((sub_model or default).strip() or default)
     if sub in ("auto", "gpt-image-2"):
-        sub = _OPENAI_DEFAULT_MODEL
-    if for_packy and sub == "gpt-image-2.5":
-        log_info("packy 无 gpt-image-2.5，改用 gpt-image-2.5-flare")
-        sub = _PACKY_DEFAULT_MODEL
+        sub = default
+    if for_packy and sub in ("gpt-image-2.5", "gpt-image-2.6"):
+        mapped = "gpt-image-2.5-flare" if sub.endswith("2.5") else "gpt-image-2.6-flare"
+        log_info(f"packy 无 {sub}，改用 {mapped}")
+        sub = mapped
     return sub
 
 

@@ -1,6 +1,21 @@
 {
   "MODELS": [
     {
+      "value": "gpt-image-2.6-flare",
+      "label": "GPT Image 2.6 Flare",
+      "kind": "gpt"
+    },
+    {
+      "value": "gpt-image-2.6-sunburst",
+      "label": "GPT Image 2.6 Sunburst",
+      "kind": "gpt"
+    },
+    {
+      "value": "gpt-image-2.6",
+      "label": "GPT Image 2.6",
+      "kind": "gpt"
+    },
+    {
       "value": "gpt-image-2.5-flare",
       "label": "GPT Image 2.5 Flare",
       "kind": "gpt"
@@ -37,15 +52,20 @@
     }
   ],
   "HINTS": {
-    "gpt-image-2.5-flare": "选择合适的模型，默认为flare",
-    "gpt-image-2.5-sunburst": "选择合适的模型，默认为flare",
-    "gpt-image-2.5": "选择合适的模型，默认为flare",
+    "gpt-image-2.6-flare": "选择合适的模型，默认为 2.6 Flare",
+    "gpt-image-2.6-sunburst": "选择合适的模型，默认为 2.6 Flare",
+    "gpt-image-2.6": "选择合适的模型，默认为 2.6 Flare",
+    "gpt-image-2.5-flare": "选择合适的模型，默认为 2.6 Flare",
+    "gpt-image-2.5-sunburst": "选择合适的模型，默认为 2.6 Flare",
+    "gpt-image-2.5": "选择合适的模型，默认为 2.6 Flare",
     "gemini-3.1-flash-image-preview": "标准分辨率，最快速度",
     "gemini-3.1-flash-image-preview-2k": "2K 高清分辨率",
     "gemini-3.1-flash-image-preview-4k": "4K 超高清分辨率",
     "image-01": "MiniMax 图像模型"
   },
   "MODEL25": [
+    "gpt-image-2.6-flare",
+    "gpt-image-2.6-sunburst",
     "gpt-image-2.5-flare",
     "gpt-image-2.5-sunburst"
   ],
@@ -132,6 +152,9 @@
     }
   },
   "QUALITY_MODELS": [
+    "gpt-image-2.6",
+    "gpt-image-2.6-flare",
+    "gpt-image-2.6-sunburst",
     "gpt-image-2.5",
     "gpt-image-2.5-flare",
     "gpt-image-2.5-sunburst"
