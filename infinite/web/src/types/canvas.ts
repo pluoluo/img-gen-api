@@ -47,6 +47,7 @@ export type CanvasNodeText = {
 
 export type CanvasNodeMetadata = {
     imageApiMask?: import("@/services/api/image-api").ImageApiMask;
+    imageApiMarkup?: import("@/services/api/image-api").ImageApiMask;
     imageApiTask?: import("@/services/api/image-api").ImageApiTaskHandle;
     content?: string;
     composerContent?: string;
@@ -60,7 +61,12 @@ export type CanvasNodeMetadata = {
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
     quality?: string;
+    complexity?: string;
     background?: string;
+    outputFormat?: string;
+    outputCompression?: string;
+    frameCount?: string;
+    frameDurationMs?: string;
     count?: number;
     textCount?: number;
     texts?: CanvasNodeText[];

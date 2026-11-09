@@ -11,6 +11,16 @@ type Mark = { tool: Tool; color: string; width: number; points: Point[]; text?: 
 type TextDraft = Point & { value: string; color: string; width: number };
 
 // Erasing affects this transparent annotation layer only, never the source pixels.
+function overlayHasTransparentPixels(canvas: HTMLCanvasElement) {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return false;
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 3; i < data.length; i += 4) {
+        if (data[i] < 255) return true;
+    }
+    return false;
+}
+
 function paint(canvas: HTMLCanvasElement, marks: Mark[]) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("无法创建标注画布");
@@ -42,7 +52,9 @@ function paint(canvas: HTMLCanvasElement, marks: Mark[]) {
     }
 }
 
-export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataUrl: string; onClose: () => void; onSave: (dataUrl: string) => Promise<void> }) {
+export type CanvasImageAnnotationPayload = { overlayDataUrl: string; compositeDataUrl: string };
+
+export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataUrl: string; onClose: () => void; onSave: (payload: CanvasImageAnnotationPayload) => Promise<void> }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [image, setImage] = useState<HTMLImageElement | null>(null);
     const [tool, setTool] = useState<Tool>("pen");
@@ -202,10 +214,13 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
         setSaving(true);
         setError("");
         try {
+            const marks = commitText();
+            if (!marks.length) throw new Error("请先添加标注");
             const overlay = document.createElement("canvas");
             overlay.width = image.naturalWidth;
             overlay.height = image.naturalHeight;
-            paint(overlay, commitText());
+            paint(overlay, marks);
+            if (!overlayHasTransparentPixels(overlay)) throw new Error("标注图层必须保留透明像素，请不要铺满整张图");
             const output = document.createElement("canvas");
             output.width = overlay.width;
             output.height = overlay.height;
@@ -213,7 +228,7 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
             if (!ctx) throw new Error("无法保存标注图片");
             ctx.drawImage(image, 0, 0);
             ctx.drawImage(overlay, 0, 0);
-            await onSave(output.toDataURL("image/png"));
+            await onSave({ overlayDataUrl: overlay.toDataURL("image/png"), compositeDataUrl: output.toDataURL("image/png") });
         } catch (err) {
             setError(err instanceof Error ? err.message : "保存失败，请重试");
         } finally {
@@ -346,7 +361,7 @@ export function CanvasNodeAnnotationDialog({ dataUrl, onClose, onSave }: { dataU
                 )}
             </div>
             <div className="min-h-6 pt-2 text-center text-xs" style={{ color: theme.node.muted }}>
-                {error ? <span role="alert">{error}</span> : tool === "text" ? "点击图片添加文字，点击空白处完成；保存为新图片，保留原图" : "保存为新图片，保留原图 · Esc 取消"}
+                {error ? <span role="alert">{error}</span> : tool === "text" ? "点击图片添加文字，点击空白处完成；保存透明标注层，保留原图" : "保存透明标注层，生成时原图与标注分开提交 · Esc 取消"}
             </div>
         </div>,
         document.body,

@@ -7,6 +7,7 @@ import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import type { ImageApiMask } from "@/services/api/image-api";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
@@ -113,8 +114,13 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         systemPrompt: mode === "text" ? [config.systemPrompt.trim(), textPolicy].filter(Boolean).join("\n\n") : config.systemPrompt,
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
+        complexity: node?.metadata?.complexity || config.complexity || defaultConfig.complexity,
         size: node?.metadata?.size || config.size || defaultConfig.size,
         background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
+        outputFormat: node?.metadata?.outputFormat || config.outputFormat || defaultConfig.outputFormat,
+        outputCompression: node?.metadata?.outputCompression || config.outputCompression || defaultConfig.outputCompression,
+        frameCount: node?.metadata?.frameCount || config.frameCount || defaultConfig.frameCount,
+        frameDurationMs: node?.metadata?.frameDurationMs || config.frameDurationMs || defaultConfig.frameDurationMs,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
@@ -124,7 +130,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
+        count: String((node?.metadata?.outputFormat || config.outputFormat) === "svg" ? 1 : node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
 }
 
@@ -180,6 +186,29 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
             storageKey: node.metadata.storageKey,
         },
     ];
+}
+
+export function resolveImageApiMarkup(sourceNode: CanvasNodeData | undefined, nodes: CanvasNodeData[], references: ReferenceImage[]): { references: ReferenceImage[]; markup?: ImageApiMask } {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const nodeOf = (ref: ReferenceImage) => byId.get(ref.id);
+    const asSource = (node: CanvasNodeData, markup: ImageApiMask): ReferenceImage => ({
+        id: `${node.id}:source`,
+        name: `${node.title || node.id}-source.png`,
+        type: node.metadata?.mimeType || "image/png",
+        dataUrl: markup.source.url || "",
+        storageKey: markup.source.storageKey,
+    });
+    const replaceComposite = (ref: ReferenceImage) => {
+        const node = nodeOf(ref);
+        const markup = node?.metadata?.imageApiMarkup;
+        return node && markup ? asSource(node, markup) : ref;
+    };
+    const firstNode = (references[0] && nodeOf(references[0])) || (sourceNode?.type === CanvasNodeType.Image ? sourceNode : undefined);
+    const markup = firstNode?.metadata?.imageApiMarkup;
+    if (!firstNode || !markup) return { references: references.map(replaceComposite) };
+    const skip = new Set([firstNode.id, markup.storageKey, markup.source.storageKey, firstNode.metadata?.storageKey]);
+    const extras = references.filter((ref) => !skip.has(ref.id) && !skip.has(ref.storageKey || "")).map(replaceComposite);
+    return { references: [asSource(firstNode, markup), ...extras], markup };
 }
 
 export function isAudioFile(file: File) {

@@ -78,12 +78,12 @@ def _save_reference(raw: bytes) -> dict:
 async def save_generation_inputs(task_id, request):
     """Persist original references in request order before contacting the provider."""
     from image_api.services.openai_img import _download_image
-    inputs = {"references": [], "mask": None, "preserve_source": None}
+    inputs = {"references": [], "mask": None, "markup": None, "preserve_source": None}
     for encoded in request.image_base64s or ([request.image_base64] if request.image_base64 else []):
         inputs["references"].append(_save_reference(base64.b64decode(encoded.split(",", 1)[-1])))
     for url in request.image_urls or ([request.image_url] if request.image_url else []):
         inputs["references"].append(_save_reference(await _download_image(url)))
-    for field, encoded in (("mask", request.mask_base64), ("preserve_source", request.preserve_source_base64)):
+    for field, encoded in (("mask", request.mask_base64), ("markup", getattr(request, "markup_base64", None)), ("preserve_source", request.preserve_source_base64)):
         if encoded:
             inputs[field] = _save_reference(base64.b64decode(encoded.split(",", 1)[-1]))
     conn = _get_conn()

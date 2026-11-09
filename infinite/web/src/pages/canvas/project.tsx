@@ -31,7 +31,7 @@ import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-pa
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCompareDialog } from "@/components/canvas/canvas-node-compare-dialog";
-import { CanvasNodeAnnotationDialog } from "@/components/canvas/canvas-node-annotation-dialog";
+import { CanvasNodeAnnotationDialog, type CanvasImageAnnotationPayload } from "@/components/canvas/canvas-node-annotation-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
@@ -72,6 +72,7 @@ import {
     isAudioFile,
     isGenerationCanceled,
     resetInterruptedGeneration,
+    resolveImageApiMarkup,
     resolveMetadataReferences,
     sourceNodeReferenceImages,
 } from "@/lib/canvas/canvas-generation-helpers";
@@ -457,6 +458,7 @@ function InfiniteCanvasPage() {
         (nodeId: string, signal: AbortSignal, imageId?: string) => ({
             signal,
             imageApiMask: nodesRef.current.find((node) => node.id === nodeId)?.metadata?.imageApiMask,
+            imageApiMarkup: nodesRef.current.find((node) => node.id === nodeId)?.metadata?.imageApiMarkup,
             onImageApiTask: async (handle: ImageApiTaskHandle) => {
                 // Commit the request identity before the paid submission, even if the
                 // page refreshes before the ordinary debounced canvas save runs.
@@ -2099,14 +2101,19 @@ function InfiniteCanvasPage() {
         [effectiveConfig.model, effectiveConfig.textModel, message, t],
     );
 
-    const annotateImageNode = useCallback(async (node: CanvasNodeData, dataUrl: string) => {
-        const image = await uploadImage(dataUrl);
+    const annotateImageNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageAnnotationPayload) => {
+        const overlay = await uploadImage(payload.overlayDataUrl);
+        const image = await uploadImage(payload.compositeDataUrl);
         const childId = nanoid();
         setNodes((prev) => [...prev, {
             id: childId, type: CanvasNodeType.Image, title: `${node.title || "图片"} · 标注`,
             position: { x: node.position.x + node.width + 96, y: node.position.y },
             width: node.width, height: node.width * image.height / image.width,
-            metadata: { ...imageMetadata(image), prompt: node.metadata?.prompt },
+            metadata: {
+                ...imageMetadata(image),
+                prompt: node.metadata?.prompt,
+                ...(overlay.storageKey ? { imageApiMarkup: { storageKey: overlay.storageKey, source: { storageKey: node.metadata?.storageKey, url: node.metadata?.content } } } : {}),
+            },
         }]);
         setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
         setSelectedNodeIds(new Set([childId]));
@@ -2617,9 +2624,10 @@ function InfiniteCanvasPage() {
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const reuseImageNode = isImageNode && (overwriteExisting || isEmptyImageNode);
-                    const referenceImages = generationContext.referenceImages;
+                    const resolved = resolveImageApiMarkup(sourceNode, nodesRef.current, generationContext.referenceImages);
+                    const referenceImages = resolved.references;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), imageApiMask: sourceNode?.metadata?.imageApiMask };
+                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), imageApiMask: sourceNode?.metadata?.imageApiMask, imageApiMarkup: resolved.markup };
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -2692,8 +2700,8 @@ function InfiniteCanvasPage() {
                         imageIds.map(async (imageId) => {
                             try {
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask }).then((items) => items[0]);
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0])
+                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
@@ -3024,7 +3032,8 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: item.metadata?.content ? undefined : t("canvas.projectPage.referenceMissing"), images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_ERROR, errorDetails: t("canvas.projectPage.referenceMissing") } : image)) } } : item)));
                 return;
             }
-            const retryImages = retryReferenceImages || [];
+            const resolvedRetry = resolveImageApiMarkup(sourceNode, nodesRef.current, retryReferenceImages || []);
+            const retryImages = resolvedRetry.references;
 
             setRunningNodeId(node.id);
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_LOADING, errorDetails: undefined } : image)) } } : item)));
@@ -3064,7 +3073,7 @@ function InfiniteCanvasPage() {
                 }
 
                 const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, imageRequestOptions(node.id, controller.signal, imageId)).then((items) => items[0])
+                    ? await requestEdit(generationConfig, prompt, retryImages, { ...imageRequestOptions(node.id, controller.signal, imageId), imageApiMarkup: node.metadata?.imageApiMarkup || resolvedRetry.markup }).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, imageRequestOptions(node.id, controller.signal, imageId)).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl, { signal: controller.signal });
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
@@ -3649,7 +3658,7 @@ function InfiniteCanvasPage() {
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
                 {comparisonSource?.metadata?.content && comparisonTarget?.metadata?.content ? <CanvasNodeCompareDialog source={comparisonSource} target={comparisonTarget} onClose={closeComparison} /> : null}
-                {annotationNode?.metadata?.content ? <CanvasNodeAnnotationDialog key={annotationNode.id} dataUrl={annotationNode.metadata.content} onClose={() => setAnnotationNodeId(null)} onSave={(dataUrl) => annotateImageNode(annotationNode, dataUrl)} /> : null}
+                {annotationNode?.metadata?.content ? <CanvasNodeAnnotationDialog key={annotationNode.id} dataUrl={annotationNode.metadata.content} onClose={() => setAnnotationNodeId(null)} onSave={(payload) => annotateImageNode(annotationNode, payload)} /> : null}
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 
                 {maskEditNode?.metadata?.content ? (

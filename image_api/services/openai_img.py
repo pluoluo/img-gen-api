@@ -385,6 +385,65 @@ def user_facing_message(exc: BaseException) -> str:
     return generic
 
 
+_OUTPUT_MIME = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+}
+
+
+def output_mime(output_format: Optional[str]) -> str:
+    fmt = (output_format or "png").strip().lower()
+    if fmt == "jpg":
+        fmt = "jpeg"
+    return _OUTPUT_MIME.get(fmt, "image/png")
+
+
+def _output_options(
+    output_format: Optional[str],
+    output_compression: Optional[int],
+    frame_count: Optional[int],
+    frame_duration_ms: Optional[int],
+    *,
+    has_ref: bool,
+    n: int,
+    mask: Optional[str],
+    markup: Optional[str],
+) -> tuple[str, dict]:
+    fmt = (output_format or "png").strip().lower() or "png"
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in _OUTPUT_MIME:
+        raise ValueError("不支持的输出格式，请使用 png、jpeg、webp、svg 或 gif")
+    if fmt == "svg":
+        if has_ref or mask or markup:
+            raise ValueError("矢量 SVG 只支持文生图，不能带参考图、蒙版或标注。")
+        if n != 1:
+            raise ValueError("矢量 SVG 每次只能生成 1 张。")
+    extra: dict = {}
+    if fmt != "png":
+        extra["output_format"] = fmt
+    if fmt in ("jpeg", "webp") and output_compression is not None:
+        extra["output_compression"] = max(0, min(100, int(output_compression)))
+    if fmt == "gif":
+        extra["frame_count"] = max(2, min(16, int(frame_count or 9)))
+        duration = int(frame_duration_ms or 200)
+        extra["frame_duration_ms"] = max(20, min(2000, int(round(duration / 10.0) * 10)))
+    return fmt, extra
+
+
+def _complexity_payload(model: str, complexity: Optional[str]) -> dict:
+    if "gpt-image-2.6" not in (model or "").lower():
+        return {}
+    value = (complexity or "high").strip().lower()
+    if value not in ("low", "medium", "high"):
+        raise ValueError("复杂度仅支持 low、medium、high")
+    return {"complexity": value}
+
+
 def _round_to_multiple_of_16(n: int) -> int:
     """Round to nearest multiple of 16 (up or down, whichever is closer)."""
     lower = (n // 16) * 16
@@ -467,7 +526,7 @@ def validate_text_to_image_size(size: str) -> str:
     Returns adjusted size string like "1024x1024".
     """
     if not size or size.strip().lower() == "auto":
-        return "1024x1024"
+        return "auto"
 
     raw = size.strip().lower().replace("*", "x")
     try:
@@ -661,10 +720,16 @@ async def generate_openai_image(
     size: str = "1024x1024",
     n: int = 1,
     quality: Optional[str] = None,
+    complexity: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     mask_base64: Optional[str] = None,
     background: Optional[str] = None,
+    markup_base64: Optional[str] = None,
+    output_format: Optional[str] = None,
+    output_compression: Optional[int] = None,
+    frame_count: Optional[int] = None,
+    frame_duration_ms: Optional[int] = None,
 ) -> List[dict]:
     """
     Generate images using OpenAI-compatible API (OpenAI-HK).
@@ -710,19 +775,29 @@ async def generate_openai_image(
 
         if mask_base64 and not has_ref_image:
             raise ValueError("PNG mask 必须关联第一张主参考图")
+        if markup_base64 and not has_ref_image:
+            raise ValueError("标注 markup 必须关联第一张主参考图")
+        if mask_base64 and markup_base64:
+            raise ValueError("请勿同时使用 markup 和 mask")
 
         if not has_ref_image:
             # Pure text-to-image via /v1/images/generations
             adjusted_size = validate_text_to_image_size(size)
+            fmt, output_fields = _output_options(
+                output_format, output_compression, frame_count, frame_duration_ms,
+                has_ref=False, n=n, mask=mask_base64, markup=markup_base64,
+            )
             url = f"{effective_base_url}/images/generations"
             body = {
                 "model": model,
                 "prompt": prompt,
                 "n": n,
                 "size": adjusted_size,
+                **output_fields,
             }
             if quality:
                 body["quality"] = quality
+            body.update(_complexity_payload(model, complexity))
             if background:
                 body["background"] = background
 
@@ -772,18 +847,24 @@ async def generate_openai_image(
 
             field_name = "image[]"
 
-            # Build files list: first image + additional refs (validate-only, no resize)
+            # First image determines output size; extra refs use the same target
+            # width so 4K extras are not uploaded raw (openai-hk 413).
             files = [(field_name, ("reference.png", processed_bytes, "image/png"))]
+            if len(processed_bytes) > 50 * 1024 * 1024:
+                raise ValueError("主参考图超过 50 MB")
             if mask_base64:
                 from image_api.services.masking import preprocess_mask
                 mask_bytes = preprocess_mask(mask_base64, first_b64, actual_size)
                 files.append(("mask", ("mask.png", mask_bytes, "image/png")))
+            if markup_base64:
+                from image_api.services.masking import preprocess_markup
+                markup_bytes = preprocess_markup(markup_base64, actual_size)
+                files.append(("markup", ("markup.png", markup_bytes, "image/png")))
+                log_info(f"标注图层预处理完成：{len(markup_bytes)} 字节，API尺寸={actual_size}")
             for i, b64 in enumerate(all_base64s[1:], start=1):
-                validate_image_pixels(b64)
-                img_data = base64.b64decode(b64)
-                other_bytes = img_data  # send original bytes, no resize
-                files.append((field_name, (f"reference_{i}.png", other_bytes, "image/png")))
-                log_info(f"参考图[{i}] 像素验证完成，已加入请求")
+                extra_bytes, extra_size, _ = preprocess_reference_image(b64, size)
+                files.append((field_name, (f"reference_{i}.png", extra_bytes, "image/png")))
+                log_info(f"参考图[{i}] 预处理完成：{len(extra_bytes)} 字节，API尺寸={extra_size}")
 
             data = {
                 "model": model,
@@ -791,17 +872,26 @@ async def generate_openai_image(
                 "n": n,
                 "size": actual_size,
             }
+            fmt, output_fields = _output_options(
+                output_format, output_compression, frame_count, frame_duration_ms,
+                has_ref=True, n=n, mask=mask_base64, markup=markup_base64,
+            )
+            data.update(output_fields)
             if quality:
                 data["quality"] = quality
+            data.update(_complexity_payload(model, complexity))
             if background:
                 data["background"] = background
 
             log_info(f"提交编辑请求：POST {url}", ctx={
                 "model": model,
                 "quality": quality,
+                "complexity": _complexity_payload(model, complexity).get("complexity"),
                 "size": actual_size,
                 "field": field_name,
-                "image_count": len(files),
+                "image_count": sum(1 for f in files if f[0] == field_name),
+                "has_mask": bool(mask_base64),
+                "has_markup": bool(markup_base64),
             })
 
             timeout = _generation_timeout(actual_size)
@@ -837,6 +927,7 @@ async def generate_openai_image(
                 images.append({
                     "url": None,
                     "base64": b64_data,
+                    "mime_type": output_mime(output_format),
                 })
             elif url_data:
                 try:
@@ -845,6 +936,7 @@ async def generate_openai_image(
                     images.append({
                         "url": url_data,
                         "base64": b64_from_url,
+                        "mime_type": output_mime(output_format),
                     })
                 except Exception as e:
                     log_warn(f"下载图片失败({type(e).__name__}): {e}", ctx={"url": url_data})

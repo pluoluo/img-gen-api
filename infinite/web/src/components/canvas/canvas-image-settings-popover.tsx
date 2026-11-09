@@ -65,7 +65,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
                     <span className="truncate">
-                        {imageQualityLabel(quality)} · {imageSizeLabel(activeSize, config.model)} · {t("canvas.controls.images", { count })}
+                        {imageQualityLabel(quality)} · {(config.outputFormat || "png").toUpperCase()} · {imageSizeLabel(activeSize, config.model)} · {t("canvas.controls.images", { count: config.outputFormat === "svg" ? 1 : count })}
                     </span>
                 </Button>
             </span>
@@ -92,7 +92,7 @@ function ImageSettingsPortal({
     const { message } = App.useApp();
     const { t } = useTranslation();
     const saveDefaults = () => {
-        useConfigStore.setState((state) => ({ config: { ...state.config, imageModel: config.model, model: config.model, quality: config.quality, size: config.size, background: config.background, canvasImageCount: config.count } }));
+        useConfigStore.setState((state) => ({ config: { ...state.config, imageModel: config.model, model: config.model, quality: config.quality, complexity: config.complexity, size: config.size, background: config.background, outputFormat: config.outputFormat, canvasImageCount: config.count } }));
         message.success(t("canvas.imageTools.defaultsSaved"));
     };
     const width = 356;

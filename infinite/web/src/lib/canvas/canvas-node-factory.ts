@@ -46,7 +46,12 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         model: config.model,
         size: config.size,
         quality: config.quality,
+        ...(config.complexity ? { complexity: config.complexity } : {}),
         ...(config.background ? { background: config.background } : {}),
+        ...(config.outputFormat && config.outputFormat !== "png" ? { outputFormat: config.outputFormat } : {}),
+        ...(config.outputCompression ? { outputCompression: config.outputCompression } : {}),
+        ...(config.frameCount ? { frameCount: config.frameCount } : {}),
+        ...(config.frameDurationMs ? { frameDurationMs: config.frameDurationMs } : {}),
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };

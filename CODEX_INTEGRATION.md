@@ -87,7 +87,8 @@ Content-Type: application/json
 | `image_base64s` | array\<string\> | 否 | 多张参考图 base64 |
 | `size` | string | 否 | 输出尺寸，格式 `宽x高`，如 `1024x1024`、`1792x1024`；`auto` 表示按参考图原始尺寸。默认 `1024x1024` |
 | `n` | int | 否 | 生成数量，默认 1 |
-| `quality` | string | 否 | 质量档位，仅 GPT 2.5 系列支持：`low` / `medium`（默认）/ `high` |
+| `quality` | string | 否 | 渲染质量。GPT 系列：`low` / `medium` / `high` 等 |
+| `complexity` | string | 否 | GPT Image 2.6 Flare / Sunburst 规划深度：`low` / `medium` / `high`（默认 `high`）。与 `quality` 独立 |
 
 **响应：**
 
@@ -100,7 +101,8 @@ Content-Type: application/json
 **参考图传参规则：**
 - 列表字段（`image_urls` / `image_base64s`）优先，单数字段（`image_url` / `image_base64`）作为回退；
 - URL 参考图由服务端自动下载并转 base64，客户端无需处理；
-- 多参考图时**第一张图决定输出尺寸**，其余仅做像素校验；
+- 多参考图时**第一张图决定输出尺寸**，其余参考图按同一目标宽度等比缩小后再上传；
+- `markup_base64` 为透明标注 PNG（不要叠在原图上），作用于第一张图，预处理后与第一张同宽高；不可与 `mask_base64` 同时使用；
 - MiniMax 与 Gemini（原生端点）仅取第一张参考图。
 
 ### 3.2 查询任务状态（轮询）

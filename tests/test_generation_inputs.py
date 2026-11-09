@@ -61,7 +61,7 @@ class GenerationInputTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(gallery.get_image(legacy['id'])['inputs'])
         await gallery.save_generation_inputs('text-fixture',self.request())
         new=(await gallery.save_image('openai','image','new','1024x1024',None,1,result,task_id='text-fixture'))[0]
-        self.assertEqual(gallery.get_image(new['id'])['inputs'],{'references':[],'mask':None,'preserve_source':None})
+        self.assertEqual(gallery.get_image(new['id'])['inputs'],{'references':[],'mask':None,'markup':None,'preserve_source':None})
     async def test_url_snapshot_and_preserve_source_keep_exact_bytes(self):
         req=self.request(image_base64s=[base64.b64encode(self.first).decode()],image_urls=['https://example.invalid/reference'],mask_base64=base64.b64encode(self.mask).decode(),preserve_source_base64=base64.b64encode(self.first).decode())
         with patch('image_api.services.openai_img._download_image',new=AsyncMock(return_value=self.second)) as download:

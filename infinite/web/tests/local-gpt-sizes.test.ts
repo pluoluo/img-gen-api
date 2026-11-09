@@ -30,6 +30,8 @@ test("other channels and larger tiers retain their existing presets", () => {
 test("explicit node dimensions and automatic settings are preserved until the preset is selected", () => {
     expect(readMediaDimensions("1024x1024", "1k", "1:1", model)).toEqual({ width: 1024, height: 1024 });
     expect(computeMediaSize("1k", "1:1", model)).toBe("1248x1248");
-    expect(computeMediaSize("auto", "16:9", model)).toBe("16:9");
+    expect(computeMediaSize("auto", "16:9", model)).toBe("auto");
     expect(computeMediaSize("1k", "auto", model)).toBe("auto");
+    expect(inferMediaScale("auto", undefined, model)).toBe("auto");
+    expect(inferMediaScale("16:9", undefined, model)).toBe("1k");
 });

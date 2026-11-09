@@ -162,3 +162,93 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(primary.size, mask_image.size)
             self.assertEqual(mask_image.mode, 'RGBA')
             self.assertEqual(mask_image.getchannel('A').getextrema(), (0, 255))
+            extra = Image.open(io.BytesIO(files[2][1][1]))
+            self.assertEqual(extra.size, (1024, 1024))
+
+    async def test_additional_refs_are_scaled_to_target_width(self):
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image(
+                'edit',
+                image_base64s=[png((3840, 2160)), png((3840, 2160))],
+                size='1664x944',
+            )
+            files = post.await_args.kwargs['files']
+            self.assertEqual([f[0] for f in files], ['image[]', 'image[]'])
+            first = Image.open(io.BytesIO(files[0][1][1]))
+            second = Image.open(io.BytesIO(files[1][1][1]))
+            self.assertEqual(first.size, (1664, 928))
+            self.assertEqual(second.size, first.size)
+
+    async def test_markup_is_transparent_png_matching_resized_primary(self):
+        overlay = Image.new('RGBA', (3840, 2160), (0, 0, 0, 0))
+        for x in range(80, 160):
+            for y in range(80, 120):
+                overlay.putpixel((x, y), (255, 0, 0, 255))
+        buf = io.BytesIO()
+        overlay.save(buf, 'PNG')
+        markup = base64.b64encode(buf.getvalue()).decode()
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('edit', image_base64s=[png((3840, 2160))], markup_base64=markup, size='1664x944')
+            files = post.await_args.kwargs['files']
+            self.assertEqual([f[0] for f in files], ['image[]', 'markup'])
+            primary = Image.open(io.BytesIO(files[0][1][1]))
+            layer = Image.open(io.BytesIO(files[1][1][1]))
+            self.assertEqual(layer.size, primary.size)
+            self.assertEqual(primary.size, (1664, 928))
+            self.assertEqual(layer.mode, 'RGBA')
+            self.assertLess(layer.getchannel('A').getextrema()[0], 255)
+            self.assertGreater(layer.getchannel('A').getextrema()[1], 0)
+
+    async def test_mask_matches_resized_primary_png(self):
+        painted = Image.new('RGBA', (3840, 2160), (255, 255, 255, 255))
+        for x in range(10, 40):
+            for y in range(10, 40):
+                painted.putpixel((x, y), (255, 255, 255, 0))
+        buf = io.BytesIO()
+        painted.save(buf, 'PNG')
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('edit', image_base64s=[png((3840, 2160))], mask_base64=base64.b64encode(buf.getvalue()).decode(), size='1664x944')
+            files = post.await_args.kwargs['files']
+            primary = Image.open(io.BytesIO(files[0][1][1]))
+            mask_image = Image.open(io.BytesIO(files[1][1][1]))
+            self.assertEqual([f[0] for f in files], ['image[]', 'mask'])
+            self.assertEqual(mask_image.size, primary.size)
+            self.assertEqual(mask_image.mode, 'RGBA')
+
+    async def test_markup_rejects_opaque_flatten_and_mask_combo(self):
+        with self.assertRaises(ValueError):
+            await generate_openai_image('edit', image_base64s=[png()], markup_base64=png(), size='1024x1024')
+        with self.assertRaises(ValueError):
+            await generate_openai_image('edit', image_base64s=[png()], mask_base64=mask(), markup_base64=mask(), size='1024x1024')
+
+    async def test_svg_rejects_references_and_gif_sends_frame_fields(self):
+        with self.assertRaises(ValueError):
+            await generate_openai_image('draw', image_base64s=[png()], output_format='svg', size='1024x1024')
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('draw', output_format='gif', frame_count=4, frame_duration_ms=126, size='1024x1024')
+            body = post.await_args.kwargs['data']
+            self.assertEqual(body['output_format'], 'gif')
+            self.assertEqual(body['frame_count'], 4)
+            self.assertEqual(body['frame_duration_ms'], 130)
+            self.assertEqual(post.await_args.kwargs.get('files'), None)
+
+    async def test_text_to_image_forwards_auto_size(self):
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('draw', size='auto')
+            self.assertEqual(post.await_args.kwargs['data']['size'], 'auto')
+            self.assertEqual(post.await_args.kwargs['data']['complexity'], 'high')
+            self.assertEqual(post.await_args.kwargs.get('files'), None)
+
+    async def test_complexity_is_sent_for_26_and_skipped_for_25(self):
+        response = {'data': [{'b64_json': png()}]}
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('draw', model='gpt-image-2.6-flare', complexity='low', size='1024x1024')
+            self.assertEqual(post.await_args.kwargs['data']['complexity'], 'low')
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
+            await generate_openai_image('draw', model='gpt-image-2.5-flare', complexity='low', size='1024x1024')
+            self.assertNotIn('complexity', post.await_args.kwargs['data'])

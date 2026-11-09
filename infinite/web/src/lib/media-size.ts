@@ -70,7 +70,7 @@ export function normalizeMediaScale(value: string | undefined) {
 export function inferMediaScale(size: string, storedScale?: string, model?: string) {
     if (storedScale) return normalizeMediaScale(storedScale);
     if (!size || size === "auto") return "auto";
-    if (parseAspectRatio(size)) return "auto";
+    if (parseAspectRatio(size)) return "1k";
     const pixels = parsePixelSize(size);
     if (!pixels) return "auto";
     const presets = imageSizePresetsForModel(model);
@@ -100,9 +100,8 @@ export function inferMediaRatio(size: string, fallback = "1:1") {
 }
 
 export function computeMediaSize(scale: string, ratio: string, model?: string) {
-    if (ratio === "auto" || !ratio) return "auto";
     const normalizedScale = normalizeMediaScale(scale);
-    if (normalizedScale === "auto") return ratio;
+    if (normalizedScale === "auto" || ratio === "auto" || !ratio) return "auto";
     return imageSizePresetsForModel(model)[normalizedScale][ratio];
 }
 

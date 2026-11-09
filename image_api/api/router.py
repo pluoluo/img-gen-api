@@ -35,17 +35,25 @@ class GenerateRequest(BaseModel):
     size: str = "1024x1024"
     n: int = 1
     quality: Optional[str] = None
+    complexity: Optional[str] = None
     background: Optional[Literal["transparent"]] = None
     mask_base64: Optional[str] = None
+    markup_base64: Optional[str] = None
     mask_reference_index: int = 0
     preserve_outside_mask: bool = False
     preserve_source_base64: Optional[str] = None
+    output_format: Optional[str] = None
+    output_compression: Optional[int] = None
+    frame_count: Optional[int] = None
+    frame_duration_ms: Optional[int] = None
     client_request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def validate_edit(self):
         if self.background and (self.model not in ("auto", "openai", "packy") or not self.sub_model.startswith("gpt-image")):
             raise ValueError("当前服务仅支持 GPT Image 透明背景生成")
+        if self.mask_base64 and self.markup_base64:
+            raise ValueError("请勿同时使用 markup 和 mask")
         if self.mask_base64:
             if self.model not in ("auto", "openai", "packy") or not self.sub_model.startswith("gpt-image-2"):
                 raise ValueError("所选模型不支持 PNG mask 局部编辑，请使用 GPT Image")
@@ -55,6 +63,24 @@ class GenerateRequest(BaseModel):
                 raise ValueError("mask 必须关联主参考图")
         elif self.preserve_outside_mask or self.preserve_source_base64:
             raise ValueError("区域外保留需要 PNG mask")
+        if self.markup_base64:
+            if self.model not in ("auto", "openai", "packy") or not self.sub_model.startswith("gpt-image-2"):
+                raise ValueError("所选模型不支持透明标注 markup，请使用 GPT Image")
+            if not (self.image_base64s or self.image_base64 or self.image_urls or self.image_url):
+                raise ValueError("标注 markup 必须关联第一张主参考图")
+        fmt = (self.output_format or "png").strip().lower()
+        if fmt == "svg":
+            if self.n != 1:
+                raise ValueError("矢量 SVG 每次只能生成 1 张")
+            if self.image_base64s or self.image_base64 or self.image_urls or self.image_url or self.mask_base64 or self.markup_base64:
+                raise ValueError("矢量 SVG 只支持文生图，不能带参考图、蒙版或标注")
+        if self.background == "transparent" and fmt not in ("png", "webp", ""):
+            raise ValueError("透明背景仅支持 PNG 或 WebP")
+        if self.complexity:
+            level = self.complexity.strip().lower()
+            if level not in ("low", "medium", "high"):
+                raise ValueError("复杂度仅支持 low、medium、high")
+            self.complexity = level
         return self
 
 
@@ -63,6 +89,7 @@ class ImageResult(BaseModel):
     base64: Optional[str] = None
     adjusted_size: Optional[str] = None
     upstream_size: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -171,10 +198,16 @@ async def _call_gpt_provider(request: GenerateRequest, provider: str, task_id: s
             size=request.size,
             n=request.n,
             quality=request.quality,
+            complexity=request.complexity,
             base_url=settings.packy_base_url,
             api_key=settings.packy_api_key,
             mask_base64=request.mask_base64,
+            markup_base64=request.markup_base64,
             background=request.background,
+            output_format=request.output_format,
+            output_compression=request.output_compression,
+            frame_count=request.frame_count,
+            frame_duration_ms=request.frame_duration_ms,
         )
     log_info("调用 open-hk GPT Image", ctx={"task_id": task_id, "sub_model": request.sub_model})
     return await generate_openai_image(
@@ -187,8 +220,14 @@ async def _call_gpt_provider(request: GenerateRequest, provider: str, task_id: s
         size=request.size,
         n=request.n,
         quality=request.quality,
+        complexity=request.complexity,
         mask_base64=request.mask_base64,
+        markup_base64=request.markup_base64,
         background=request.background,
+        output_format=request.output_format,
+        output_compression=request.output_compression,
+        frame_count=request.frame_count,
+        frame_duration_ms=request.frame_duration_ms,
     )
 
 

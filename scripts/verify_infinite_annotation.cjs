@@ -188,9 +188,10 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
       await annotationPanel().getByRole('button', { name: '生成', exact: true }).click();
       await completed;
       const sent = submissions[submissions.length - 1];
-      assert.equal(sent.image_base64s.length, 2);
-      assert.equal(sent.image_base64s[0], encoded, behavior + ' must submit the annotated PNG first');
-      assert.notEqual(sent.image_base64s[1], encoded);
+      assert.equal(sent.image_base64s.length, 1);
+      assert.ok(sent.markup_base64);
+      assert.notEqual(sent.image_base64s[0], encoded, behavior + ' must submit the original, not the flattened annotation');
+      assert.notEqual(sent.markup_base64, encoded);
       for (let i = 0; i < 80; i++) {
         const saved = await project(page);
         if (behavior === 'new-node' ? saved.nodes.length === after.nodes.length + 1 && saved.nodes.every(n => n.metadata?.status !== 'loading') : saved.nodes.find(n => n.id === annotated.id)?.metadata.storageKey !== annotated.metadata.storageKey) break;

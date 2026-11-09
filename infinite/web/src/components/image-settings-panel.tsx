@@ -15,15 +15,22 @@ const qualityOptions = [
     { value: "xhigh", labelKey: "xhigh" },
     { value: "max", labelKey: "max" },
 ];
+const complexityOptions = [
+    { value: "low", labelKey: "low" },
+    { value: "medium", labelKey: "medium" },
+    { value: "high", labelKey: "high" },
+];
 const DIMENSION_STEP = 16;
 
 export const imageQualityOptions = qualityOptions.map((item) => ({ value: item.value, get label() { return i18n.t(`settingsPanels.common.${item.labelKey}`); } }));
 export const imageAspectOptions = mediaRatioOptions.map((item) => ({ value: item.value, label: item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value }));
 export const imageScaleOptions = mediaScaleOptions.map((value) => ({ value, label: value === "auto" ? i18n.t("settingsPanels.common.auto") : value }));
 
+type ImageSettingKey = "quality" | "complexity" | "size" | "count" | "background" | "outputFormat" | "outputCompression" | "frameCount" | "frameDurationMs";
+
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "background", value: string) => void;
+    onConfigChange: (key: ImageSettingKey, value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -35,15 +42,32 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const { t } = useTranslation();
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const quality = config.quality || "auto";
+    const complexity = config.complexity || "high";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
+    const outputFormat = config.outputFormat || "png";
+    const outputCompression = Math.max(0, Math.min(100, Math.floor(Number(config.outputCompression) || 80)));
+    const frameCount = Math.max(2, Math.min(16, Math.floor(Number(config.frameCount) || 9)));
+    const frameDurationMs = Math.max(20, Math.min(2000, Math.round((Number(config.frameDurationMs) || 200) / 10) * 10));
+    const formatOptions = [
+        { value: "png", label: "PNG" },
+        { value: "jpeg", label: "JPEG" },
+        { value: "webp", label: "WebP" },
+        { value: "svg", label: "SVG" },
+        { value: "gif", label: "GIF" },
+    ];
+    const selectFormat = (value: string) => {
+        onConfigChange("outputFormat", value);
+        if (value === "svg") onConfigChange("count", "1");
+        if ((value === "jpeg" || value === "gif" || value === "svg") && transparentBackground) onConfigChange("background", "");
+    };
     const selectedScale = inferMediaScale(activeSize, undefined, config.model);
     const selectedRatio = inferMediaRatio(activeSize);
     const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio, config.model);
     const applySize = (scale: string, ratio: string) => onConfigChange("size", computeMediaSize(scale, ratio, config.model));
-    const selectScale = (scale: string) => applySize(scale, selectedRatio === "auto" ? "1:1" : selectedRatio);
-    const selectRatio = (ratio: string) => applySize(selectedScale, ratio);
+    const selectScale = (scale: string) => applySize(scale, scale === "auto" ? "auto" : selectedRatio === "auto" ? "1:1" : selectedRatio);
+    const selectRatio = (ratio: string) => applySize(selectedScale === "auto" && ratio !== "auto" ? "1k" : selectedScale, ratio);
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
         const width = key === "width" ? next : dimensions.width;
@@ -63,15 +87,26 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 }}
             >
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.image.title")}</div> : null}
-                <div className="space-y-2.5">
+                <div className="space-y-1.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.quality")}</SettingTitle>
-                    <div className="grid grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-6 gap-1">
                         {qualityOptions.map((item) => (
-                            <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                            <OptionPill key={item.value} compact selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {t(`settingsPanels.common.${item.labelKey}`)}
                             </OptionPill>
                         ))}
                     </div>
+                </div>
+                <div className="space-y-1.5">
+                    <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.complexity")}</SettingTitle>
+                    <div className="grid grid-cols-3 gap-1">
+                        {complexityOptions.map((item) => (
+                            <OptionPill key={item.value} compact selected={complexity === item.value} theme={theme} onClick={() => onConfigChange("complexity", item.value)}>
+                                {t(`settingsPanels.common.${item.labelKey}`)}
+                            </OptionPill>
+                        ))}
+                    </div>
+                    <div className="text-[11px] leading-4" style={{ color: theme.node.muted, opacity: 0.75 }}>{t("settingsPanels.image.complexityHint")}</div>
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
@@ -101,14 +136,14 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-1.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.aspectRatio")}</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-5 gap-1">
                         {mediaRatioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
-                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                                className="flex h-[46px] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border bg-transparent text-[11px] leading-none transition hover:opacity-80"
                                 style={{ borderColor: selectedRatio === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => selectRatio(item.value)}
@@ -119,6 +154,36 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.format")}</SettingTitle>
+                    <div className="grid grid-cols-5 gap-2.5">
+                        {formatOptions.map((item) => (
+                            <OptionPill key={item.value} selected={outputFormat === item.value} theme={theme} onClick={() => selectFormat(item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                    {outputFormat === "svg" ? <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>{t("settingsPanels.image.svgHint")}</div> : null}
+                    {outputFormat === "gif" ? <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>{t("settingsPanels.image.gifHint")}</div> : null}
+                </div>
+                {outputFormat === "jpeg" || outputFormat === "webp" ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.compression", { value: outputCompression })}</SettingTitle>
+                        <input type="range" min="0" max="100" value={outputCompression} className="w-full" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => onConfigChange("outputCompression", event.target.value)} />
+                    </div>
+                ) : null}
+                {outputFormat === "gif" ? (
+                    <>
+                        <div className="space-y-2.5">
+                            <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.frameCount", { count: frameCount })}</SettingTitle>
+                            <input type="range" min="2" max="16" value={frameCount} className="w-full" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => onConfigChange("frameCount", event.target.value)} />
+                        </div>
+                        <div className="space-y-2.5">
+                            <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.frameDuration", { ms: frameDurationMs })}</SettingTitle>
+                            <input type="range" min="20" max="2000" step="10" value={frameDurationMs} className="w-full" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => onConfigChange("frameDurationMs", event.target.value)} />
+                        </div>
+                    </>
+                ) : null}
                 <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.transparent")}</SettingTitle>
@@ -127,7 +192,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                     <span onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
+                        <Switch size="small" checked={transparentBackground} disabled={outputFormat === "jpeg" || outputFormat === "gif" || outputFormat === "svg"} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
                     </span>
                 </div>
                 <div className="space-y-2.5">
@@ -174,11 +239,11 @@ export function imageSizeLabel(size: string, model?: string) {
     return `${scale} · ${ratio}`;
 }
 
-function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+function OptionPill({ selected, theme, onClick, children, compact }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode; compact?: boolean }) {
     return (
         <button
             type="button"
-            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
+            className={compact ? "h-7 cursor-pointer rounded-md border px-1 text-[11px] leading-none transition hover:opacity-80" : "h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"}
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}
@@ -237,11 +302,11 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
 function AspectIcon({ width, height, color }: { width: number; height: number; color: string }) {
     if (!width || !height) return null;
     const ratio = width / height;
-    const boxWidth = ratio >= 1 ? 24 : Math.max(10, 24 * ratio);
-    const boxHeight = ratio >= 1 ? Math.max(10, 24 / ratio) : 24;
+    const boxWidth = ratio >= 1 ? 16 : Math.max(7, 16 * ratio);
+    const boxHeight = ratio >= 1 ? Math.max(7, 16 / ratio) : 16;
     return (
-        <span className="grid h-7 w-9 place-items-center">
-            <span className="border-2" style={{ width: boxWidth, height: boxHeight, borderColor: color }} />
+        <span className="grid h-4 w-6 place-items-center">
+            <span className="border" style={{ width: boxWidth, height: boxHeight, borderColor: color }} />
         </span>
     );
 }

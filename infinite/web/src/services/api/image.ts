@@ -117,6 +117,11 @@ function normalizeQuality(quality: string) {
     return IMAGE_QUALITY_VALUES.includes(value) ? value : undefined;
 }
 
+function normalizeComplexity(complexity: string | undefined) {
+    const value = (complexity || "high").trim().toLowerCase();
+    return value === "low" || value === "medium" || value === "high" ? value : "high";
+}
+
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
 function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
@@ -169,7 +174,7 @@ function validateImageSize(width: number, height: number) {
 
 function resolveRequestSize(size: string, model?: string) {
     const value = size.trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
+    if (!value || value.toLowerCase() === "auto") return "auto";
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
         validateImageSize(dimensions.width, dimensions.height);
@@ -829,20 +834,32 @@ async function requestLocalImages(config: AiConfig, requestConfig: AiConfig, pro
     if (options?.signal?.aborted) abort();
     const timer = setTimeout(() => controller.abort(new Error("生成查询超时，请在原界面任务记录中查看结果，避免重复提交")), IMAGE_REQUEST_TIMEOUT_MS);
     try {
+        if (options?.imageApiMask && options?.imageApiMarkup) throw new Error("请勿同时使用 markup 和 mask");
         if (options?.imageApiMask && !requestConfig.model.startsWith("gpt-image-2")) throw new Error("PNG mask 精确局部编辑需要选择本机 GPT Image 模型");
+        if (options?.imageApiMarkup && !requestConfig.model.startsWith("gpt-image-2")) throw new Error("透明标注 markup 需要选择本机 GPT Image 模型");
         const mask = options?.imageApiMask ? await imageToDataUrl(options.imageApiMask) : undefined;
+        const markup = options?.imageApiMarkup ? await imageToDataUrl(options.imageApiMarkup) : undefined;
         const images = options?.imageApiMask
             ? [await imageToDataUrl(options.imageApiMask.source)]
             : await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const format = (config.outputFormat || "png").toLowerCase();
+        if (format === "svg" && (images.length || mask || markup)) throw new Error("矢量 SVG 只支持文生图，不能带参考图、蒙版或标注");
+        const n = format === "svg" ? 1 : Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
         return await requestImageApi({
             sub_model: requestConfig.model,
             prompt: withSystemPrompt(requestConfig, prompt),
             size: resolveRequestSize(config.size, config.model || config.imageModel),
-            n: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1))),
+            n,
             quality: normalizeQuality(config.quality),
+            complexity: normalizeComplexity(config.complexity),
             background: normalizeBackground(config.background),
+            output_format: format === "png" ? undefined : format,
+            output_compression: format === "jpeg" || format === "webp" ? Math.max(0, Math.min(100, Math.floor(Number(config.outputCompression) || 80))) : undefined,
+            frame_count: format === "gif" ? Math.max(2, Math.min(16, Math.floor(Number(config.frameCount) || 9))) : undefined,
+            frame_duration_ms: format === "gif" ? Math.max(20, Math.min(2000, Math.round((Number(config.frameDurationMs) || 200) / 10) * 10)) : undefined,
             ...(images.length ? { image_base64s: images.map((image) => image.split(",")[1]) } : {}),
             ...(mask ? { mask_base64: mask.split(",")[1], preserve_outside_mask: true } : {}),
+            ...(markup ? { markup_base64: markup.split(",")[1] } : {}),
         }, controller.signal, options);
     } finally {
         clearTimeout(timer);

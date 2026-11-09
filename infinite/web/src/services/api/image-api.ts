@@ -52,20 +52,27 @@ type ImageApiInput = {
     size?: string;
     n: number;
     quality?: string;
+    complexity?: string;
     background?: string;
+    output_format?: string;
+    output_compression?: number;
+    frame_count?: number;
+    frame_duration_ms?: number;
     image_base64s?: string[];
     mask_base64?: string;
+    markup_base64?: string;
     preserve_outside_mask?: boolean;
 };
 type ImageTask = {
     status: "pending" | "running" | "completed" | "failed" | "cancelled";
-    images: { base64?: string; url?: string }[];
+    images: { base64?: string; url?: string; mime_type?: string }[];
     error?: string;
 };
 
 export type ImageApiTaskHandle = { clientRequestId: string; taskId?: string; failed?: boolean };
 export type ImageApiMask = { storageKey: string; source: { storageKey?: string; url?: string } };
-export type ImageApiLifecycle = { imageApiTask?: ImageApiTaskHandle; onImageApiTask?: (handle: ImageApiTaskHandle) => Promise<void>; imageApiMask?: ImageApiMask };
+export type ImageApiMarkup = ImageApiMask;
+export type ImageApiLifecycle = { imageApiTask?: ImageApiTaskHandle; onImageApiTask?: (handle: ImageApiTaskHandle) => Promise<void>; imageApiMask?: ImageApiMask; imageApiMarkup?: ImageApiMarkup };
 
 function cancelUpstream(taskId?: string) {
     if (!taskId) return;
@@ -118,7 +125,8 @@ export async function waitForImageApiTask(handle: ImageApiTaskHandle, signal: Ab
             if (task.status === "completed") {
                 if (!task.images.length) throw new Error("生成任务没有返回图片");
                 return task.images.map((image) => {
-                    const dataUrl = image.base64 ? `data:image/png;base64,${image.base64}` : image.url;
+                    const mime = image.mime_type || "image/png";
+                    const dataUrl = image.base64 ? `data:${mime};base64,${image.base64}` : image.url;
                     if (!dataUrl) throw new Error("生成结果缺少图片数据");
                     return { id: nanoid(), dataUrl };
                 });

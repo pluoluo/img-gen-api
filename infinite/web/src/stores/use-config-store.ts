@@ -52,8 +52,13 @@ export type AiConfig = {
     reasoningEffort: ReasoningEffort;
     models: string[];
     quality: string;
+    complexity: string;
     size: string;
     background: string;
+    outputFormat: string;
+    outputCompression: string;
+    frameCount: string;
+    frameDurationMs: string;
     count: string;
     canvasImageCount: string;
     proxyEnabled: boolean;
@@ -121,8 +126,13 @@ export const defaultConfig: AiConfig = {
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "auto",
-    size: "1:1",
+    complexity: "high",
+    size: "auto",
     background: "",
+    outputFormat: "png",
+    outputCompression: "80",
+    frameCount: "9",
+    frameDurationMs: "200",
     count: "1",
     canvasImageCount: "3",
     proxyEnabled: false,
