@@ -6,7 +6,7 @@ const original = image("original");
 const annotated = image("annotated");
 const edge: CanvasConnection = { id: "lineage", fromNodeId: original.id, toNodeId: annotated.id };
 
-test("editing an annotated image includes itself first and keeps the original input", () => {
+test("ordinary image editing includes itself first and keeps a distinct upstream reference", () => {
     for (const getInputs of [getGenerationResourceNodes, getMentionResourceNodes]) {
         const result = getInputs(annotated.id, [original, annotated], [edge]);
         expect(result.map(node => node.id)).toEqual(["annotated", "original"]);
@@ -24,3 +24,17 @@ test("self input stays first when a downstream config supplies additional refere
     for (const getInputs of [getGenerationResourceNodes, getMentionResourceNodes]) expect(getInputs(annotated.id, [original, annotated, config], connections).map(n => n.id)).toEqual([annotated.id, original.id]);
     expect(getGenerationResourceNodes(config.id, [original, annotated, config], connections).map(n => n.id)).toEqual([original.id, annotated.id]);
 });
+
+for (const kind of ["markup", "mask"] as const) {
+    test(`${kind} node bundles its original without showing it as an extra reference`, () => {
+        const layer = { storageKey: "image:layer", source: { storageKey: "image:original", url: "blob:original" } };
+        const marked = { ...annotated, metadata: { ...annotated.metadata, ...(kind === "markup" ? { imageApiMarkup: layer } : { maskLayer: true, imageApiMask: layer }) } };
+        const extra = image("extra");
+        const nodes = [original, marked, extra];
+        const connections = [edge, { id: "extra-input", fromNodeId: extra.id, toNodeId: marked.id }];
+        for (const getInputs of [getGenerationResourceNodes, getMentionResourceNodes]) {
+            expect(getInputs(marked.id, nodes, connections).map(node => node.id)).toEqual([marked.id, extra.id]);
+        }
+        expect(connections).toHaveLength(2);
+    });
+}

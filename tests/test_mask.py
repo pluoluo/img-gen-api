@@ -128,7 +128,7 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_preservation_is_applied_before_task_and_gallery(self):
         with patch.object(api, 'generate_openai_image', new=AsyncMock(return_value=[{'base64': png((800, 600), (255, 0, 0, 255))}])):
-            body = self.payload(preserve_outside_mask=True, preserve_source_base64=png(color=(20, 30, 40, 255)))
+            body = self.payload(size='auto', preserve_outside_mask=True, preserve_source_base64=png(color=(20, 30, 40, 255)))
             body['model'] = 'openai'
             task = await self.submit(body)
             self.assertEqual(task.status.value, 'completed', task.error)
@@ -138,6 +138,19 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(task.images[0]['adjusted_size'], '400x300')
             self.assertEqual(task.images[0]['upstream_size'], '800x600')
             self.assertEqual(api.save_image.await_args.kwargs['image_results'], task.images)
+
+    async def test_explicit_4k_mask_result_is_not_shrunk_back_to_reference(self):
+        with patch.object(api, 'generate_openai_image', new=AsyncMock(return_value=[{'base64': png((800, 600), (255, 0, 0, 255))}])) as generate:
+            body = self.payload(size='3840x2160', preserve_outside_mask=True)
+            body['model'] = 'openai'
+            task = await self.submit(body)
+            self.assertEqual(task.status.value, 'completed', task.error)
+            self.assertEqual(generate.await_args.kwargs['size'], '3840x2160')
+            image = Image.open(io.BytesIO(base64.b64decode(task.images[0]['base64'])))
+            self.assertEqual(image.size, (3840, 2160))
+            self.assertEqual(image.getpixel((20, 20)), (35, 86, 128, 255))
+            self.assertEqual(image.getpixel((1440, 720)), (255, 0, 0, 255))
+            self.assertEqual(task.images[0]['adjusted_size'], '3840x2160')
 
     async def test_url_primary_is_frozen_and_mask_still_matches(self):
         body = self.payload()
@@ -165,7 +178,19 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             extra = Image.open(io.BytesIO(files[2][1][1]))
             self.assertEqual(extra.size, (1024, 1024))
 
-    async def test_additional_refs_are_scaled_to_target_width(self):
+    async def test_4k_primary_and_mask_match_even_if_upstream_follows_primary_size(self):
+        with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value={'data': [{'b64_json': png()}]})) as post:
+            await generate_openai_image('edit', image_base64s=[png()], mask_base64=mask(), size='3840x2160')
+            files = post.await_args.kwargs['files']
+            primary = Image.open(io.BytesIO(files[0][1][1]))
+            layer = Image.open(io.BytesIO(files[1][1][1]))
+            self.assertEqual(primary.size, (3840, 2160))
+            self.assertEqual(layer.size, primary.size)
+            self.assertEqual(layer.getpixel((1440, 720))[3], 0)
+            self.assertEqual(layer.getpixel((20, 20))[3], 255)
+            self.assertEqual(post.await_args.kwargs['data']['size'], '3840x2160')
+
+    async def test_explicit_primary_dimensions_and_extra_reference_ratio(self):
         response = {'data': [{'b64_json': png()}]}
         with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value=response)) as post:
             await generate_openai_image(
@@ -177,8 +202,8 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([f[0] for f in files], ['image[]', 'image[]'])
             first = Image.open(io.BytesIO(files[0][1][1]))
             second = Image.open(io.BytesIO(files[1][1][1]))
-            self.assertEqual(first.size, (1664, 928))
-            self.assertEqual(second.size, first.size)
+            self.assertEqual(first.size, (1664, 944))
+            self.assertEqual(second.size, (1664, 928))
 
     async def test_markup_is_transparent_png_matching_resized_primary(self):
         overlay = Image.new('RGBA', (3840, 2160), (0, 0, 0, 0))
@@ -196,7 +221,7 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             primary = Image.open(io.BytesIO(files[0][1][1]))
             layer = Image.open(io.BytesIO(files[1][1][1]))
             self.assertEqual(layer.size, primary.size)
-            self.assertEqual(primary.size, (1664, 928))
+            self.assertEqual(primary.size, (1664, 944))
             self.assertEqual(layer.mode, 'RGBA')
             self.assertLess(layer.getchannel('A').getextrema()[0], 255)
             self.assertGreater(layer.getchannel('A').getextrema()[1], 0)

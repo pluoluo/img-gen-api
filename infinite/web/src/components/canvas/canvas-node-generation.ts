@@ -4,7 +4,7 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
-import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { filterBundledImageSources, getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 
 export type NodeGenerationContext = {
@@ -112,12 +112,15 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
-    return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
+    const inputNodes = getGenerationResourceNodes(nodeId, nodes, connections);
+    const resources = inputNodes.flatMap((node) => node.type === CanvasNodeType.Group ? getGroupResourceNodes(node.id, nodes) : [node]);
+    const includedIds = new Set(filterBundledImageSources(resources).map((node) => node.id));
+    return inputNodes.flatMap((node): NodeGenerationInput[] => {
         if (node.type === CanvasNodeType.Group) {
-            const children = getGroupResourceNodes(node.id, nodes).flatMap(readNodeGenerationResource);
+            const children = getGroupResourceNodes(node.id, nodes).filter((child) => includedIds.has(child.id)).flatMap(readNodeGenerationResource);
             return children.length ? [{ nodeId: node.id, type: "group", title: node.title, children }] : [];
         }
-        return readNodeGenerationResource(node);
+        return includedIds.has(node.id) ? readNodeGenerationResource(node) : [];
     });
 }
 

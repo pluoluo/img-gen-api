@@ -61,3 +61,18 @@ export function dataUrlToFile(image: ReferenceImage) {
     }
     return new File([bytes], image.name || "reference.png", { type: mimeType });
 }
+
+export async function resizeImageDataUrl(dataUrl: string, width: number, height: number) {
+    const image = new Image();
+    image.src = dataUrl;
+    await image.decode();
+    if (image.naturalWidth === width && image.naturalHeight === height) return dataUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error(i18n.t("common.imageReadFailed"));
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/png");
+}

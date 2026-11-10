@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
-import { getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { filterBundledImageSources, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -15,7 +15,9 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const current = nodes.find((node) => node.id === nodeId && node.type === CanvasNodeType.Image && node.metadata?.content);
     const sources = current ? [current, ...connectedNodes.filter((node) => node.id !== nodeId)] : connectedNodes;
-    const references = sources.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
+    const items = sources.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
+    const visibleIds = new Set(filterBundledImageSources(items.map(({ node }) => node)).map((node) => node.id));
+    const references = items.filter(({ node }) => visibleIds.has(node.id));
     return (
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>{t("canvas.references.title")}</div>

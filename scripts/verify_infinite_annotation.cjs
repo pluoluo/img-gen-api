@@ -122,6 +122,11 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
     assert.ok(resultPixels.textPixels > original.textPixels);
     assert.deepEqual(await pixels(page, originalKey), original);
     assert.ok(after.connections.some(c => c.fromNodeId === 'fixture-image' && c.toNodeId === annotated.id));
+    await page.locator(`[data-node-id="${annotated.id}"]`).click();
+    const references = page.locator(`[data-node-panel="${annotated.id}"] [data-reference-node-id]`);
+    await references.first().waitFor();
+    assert.equal(await references.count(), 1, 'marked image bundles its original in the quick generator');
+    assert.equal(await references.first().getAttribute('data-reference-node-id'), annotated.id);
     await page.reload();
     assert.equal((await project(page)).nodes.length, after.nodes.length);
     assert.deepEqual(await pixels(page, annotated.metadata.storageKey), resultPixels);
@@ -137,8 +142,8 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
     assert.equal((await project(page)).nodes.length, after.nodes.length);
     await page.setViewportSize({ width: 1600, height: 1000 });
     const projectUrl = page.url();
-    await page.goto(origin + '/');
-    await page.getByRole('tab', { name: '画布工作区 · 预览' }).click();
+    await page.goto(origin + '/legacy');
+    await page.getByRole('tab', { name: '画布工作区', exact: true }).click();
     const embedded = page.frameLocator('iframe[title="画布工作区"]');
     await embedded.getByRole('heading', { name: '迁移验收画布', exact: true }).click();
     await embedded.locator('[data-node-id="fixture-image"]').click();
@@ -159,7 +164,7 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
     const selectAnnotated = async () => { await page.locator(`[data-node-id="${annotated.id}"]`).click(); await annotationPanel().getByLabel('当前图片', { exact: true }).waitFor(); };
     await selectAnnotated();
     const shownRefs = await annotationPanel().locator('[data-reference-node-id]').evaluateAll(items => items.map(item => item.dataset.referenceNodeId));
-    assert.deepEqual(shownRefs, [annotated.id, 'fixture-image']);
+    assert.deepEqual(shownRefs, [annotated.id]);
     assert.equal(await annotationPanel().getByLabel('当前图片', { exact: true }).getByRole('button').count(), 0);
     await page.screenshot({ path: output + '/annotation-reference.png', animations: 'disabled' });
     const encoded = await page.evaluate(key => new Promise(resolve => {

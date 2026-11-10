@@ -65,7 +65,19 @@ export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData
 
 function withCurrentImage(nodeId: string, nodes: CanvasNodeData[], inputs: CanvasNodeData[]) {
     const current = nodes.find((node) => node.id === nodeId);
-    return current?.type === CanvasNodeType.Image && current.metadata?.content ? [current, ...inputs.filter((node) => node.id !== nodeId)] : inputs;
+    return filterBundledImageSources(current?.type === CanvasNodeType.Image && current.metadata?.content ? [current, ...inputs.filter((node) => node.id !== nodeId)] : inputs);
+}
+
+// A marked image already carries its original as part of the editing input.
+// Keep the lineage edge, but do not list the same original as another reference.
+export function filterBundledImageSources(inputs: CanvasNodeData[]) {
+    const sources = inputs.flatMap((node) => {
+        const layer = node.metadata?.imageApiMarkup || (node.metadata?.maskLayer ? node.metadata.imageApiMask : undefined);
+        return layer ? [layer.source] : [];
+    });
+    return inputs.filter((node) => !sources.some((source) =>
+        source.storageKey ? source.storageKey === node.metadata?.storageKey : Boolean(source.url && source.url === node.metadata?.content),
+    ));
 }
 
 function getContextInputNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

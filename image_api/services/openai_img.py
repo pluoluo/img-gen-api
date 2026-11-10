@@ -554,8 +554,8 @@ def validate_text_to_image_size(size: str) -> str:
 def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tuple[int, int, str]:
     """
     Validate and adjust user-provided pixel dimensions for image-to-image.
-    Preserves the reference image's aspect ratio — scales proportionally
-    so WIDTH matches the target width (ignores target height).
+    Explicit WxH takes precedence over the reference dimensions.
+    Auto preserves reference dimensions, subject to existing API constraints.
     Returns (adjusted_w, adjusted_h, adjusted_size_str).
 
     API constraints (open-hk gpt-image-2 / PackyAPI):
@@ -577,12 +577,13 @@ def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tupl
         try:
             t_parts = target_lower.split("x")
             t_w = int(t_parts[0])
+            t_h = int(t_parts[1]) if len(t_parts) == 2 else int(round(t_w / orig_ratio))
         except (ValueError, IndexError, AttributeError):
             raw_w, raw_h = orig_w, orig_h
             log_warn(f"[size] parse failed → auto fallback to {raw_w}x{raw_h}")
         else:
             raw_w = t_w
-            raw_h = int(round(t_w / orig_ratio)) if orig_ratio > 0 else t_w
+            raw_h = t_h
             log_info(f"[size] target={target_size} → scale ref to W={raw_w}, H={raw_h}")
 
     actual_w, actual_h = _constrain_pixel_dims(raw_w, raw_h)
@@ -595,7 +596,7 @@ def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tupl
             t_h_orig = int(t_parts[1]) if len(t_parts) == 2 else int(round(t_w_orig / orig_ratio))
             if t_w_orig != actual_w or t_h_orig != actual_h:
                 log_info(f"[size] adjusted {t_w_orig}x{t_h_orig} → {actual_w}x{actual_h} "
-                         f"(ratio preserved, API constraints applied)")
+                         f"(API constraints applied)")
         except (ValueError, IndexError, AttributeError):
             pass
 
@@ -605,8 +606,7 @@ def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tupl
 
 def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[bytes, str, str]:
     """
-    Resize reference image based on user's selected target_size, preserving
-    original aspect ratio (no cropping).
+    Resize reference image to the user's selected target_size.
 
     Returns: (resized_bytes, actual_size_for_api, adjusted_size_str)
 
@@ -621,7 +621,7 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
 
     Scaling logic:
       - "auto": keep original dimensions, apply 16x alignment + pixel constraints
-      - Specific size: scale ref image to match that WIDTH (proportionally),
+      - Specific size: use the requested width and height,
         then apply 16x alignment + pixel constraints
     """
     try:
@@ -847,8 +847,8 @@ async def generate_openai_image(
 
             field_name = "image[]"
 
-            # First image determines output size; extra refs use the same target
-            # width so 4K extras are not uploaded raw (openai-hk 413).
+            # First image determines output size. Extra refs keep their own
+            # aspect ratio at the target width, avoiding raw 4K uploads (413).
             files = [(field_name, ("reference.png", processed_bytes, "image/png"))]
             if len(processed_bytes) > 50 * 1024 * 1024:
                 raise ValueError("主参考图超过 50 MB")
@@ -862,7 +862,7 @@ async def generate_openai_image(
                 files.append(("markup", ("markup.png", markup_bytes, "image/png")))
                 log_info(f"标注图层预处理完成：{len(markup_bytes)} 字节，API尺寸={actual_size}")
             for i, b64 in enumerate(all_base64s[1:], start=1):
-                extra_bytes, extra_size, _ = preprocess_reference_image(b64, size)
+                extra_bytes, extra_size, _ = preprocess_reference_image(b64, (size or "auto").split("x")[0])
                 files.append((field_name, (f"reference_{i}.png", extra_bytes, "image/png")))
                 log_info(f"参考图[{i}] 预处理完成：{len(extra_bytes)} 字节，API尺寸={extra_size}")
 

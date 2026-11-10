@@ -208,7 +208,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         const nextPrompt = prompt.trim();
         const canvas = maskCanvasRef.current;
         const element = imageRef.current;
-        if (!nextPrompt) return setError(t("canvas.editors.maskPromptRequired"));
+        if (generate && !nextPrompt) return setError(t("canvas.editors.maskPromptRequired"));
         if (!canvas || !element) return;
         if (!canvasHasPaint(canvas)) return setError(t("canvas.editors.maskRequired"));
         const apiMask = document.createElement("canvas");
@@ -316,7 +316,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                     </div>
 
                     <div className="space-y-2">
-                        <div className="text-sm font-medium opacity-75">{t("canvas.editors.editInstructions")}</div>
+                        <div className="text-sm font-medium opacity-75">{t("canvas.editors.maskInstructions")}</div>
                         <Input.TextArea
                             rows={6}
                             value={prompt}

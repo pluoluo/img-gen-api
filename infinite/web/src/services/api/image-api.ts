@@ -70,7 +70,7 @@ type ImageTask = {
 };
 
 export type ImageApiTaskHandle = { clientRequestId: string; taskId?: string; failed?: boolean };
-export type ImageApiMask = { storageKey: string; source: { storageKey?: string; url?: string } };
+export type ImageApiMask = { storageKey: string; source: { storageKey?: string; url?: string }; overlay?: { storageKey?: string; url?: string } };
 export type ImageApiMarkup = ImageApiMask;
 export type ImageApiLifecycle = { imageApiTask?: ImageApiTaskHandle; onImageApiTask?: (handle: ImageApiTaskHandle) => Promise<void>; imageApiMask?: ImageApiMask; imageApiMarkup?: ImageApiMarkup };
 

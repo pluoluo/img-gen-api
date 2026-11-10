@@ -1,3 +1,4 @@
+import { remapImageReferenceLabels } from "@/lib/image-reference-prompt";
 import { CANVAS_IMAGE_PROMPT_SYSTEM_PROMPT, CANVAS_TEXT_EDIT_SYSTEM_PROMPT } from "@/lib/canvas/canvas-image-prompt";
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
@@ -190,16 +191,29 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
     ];
 }
 
-export function resolveImageApiMarkup(sourceNode: CanvasNodeData | undefined, nodes: CanvasNodeData[], references: ReferenceImage[]): { references: ReferenceImage[]; markup?: ImageApiMask } {
+export function resolveImageApiMarkup(sourceNode: CanvasNodeData | undefined, nodes: CanvasNodeData[], references: ReferenceImage[], prompt = ""): { references: ReferenceImage[]; markup?: ImageApiMask; mask?: ImageApiMask; prompt?: string } {
     const byId = new Map(nodes.map((node) => [node.id, node]));
     const nodeOf = (ref: ReferenceImage) => byId.get(ref.id);
     const asSource = (node: CanvasNodeData, markup: ImageApiMask): ReferenceImage => ({
         id: `${node.id}:source`,
         name: `${node.title || node.id}-source.png`,
         type: node.metadata?.mimeType || "image/png",
-        dataUrl: markup.source.url || "",
+        dataUrl: markup.source.storageKey ? "" : markup.source.url || "",
         storageKey: markup.source.storageKey,
     });
+    // A mask node carries its original and layer together, even when connected
+    // after other references. Keep that original first and preserve extra inputs.
+    const maskNode = references.map(nodeOf).find((node) => node?.metadata?.maskLayer && node.metadata.imageApiMask)
+        || (sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.maskLayer && sourceNode.metadata.imageApiMask ? sourceNode : undefined);
+    const mask = maskNode?.metadata?.imageApiMask;
+    if (maskNode && mask) {
+        if (references.some((ref) => nodeOf(ref)?.metadata?.imageApiMarkup)) throw new Error("请勿同时使用标注和蒙版");
+        if (references.some((ref) => { const node = nodeOf(ref); const other = node?.metadata?.maskLayer ? node.metadata.imageApiMask : undefined; return other && other.storageKey !== mask.storageKey; })) throw new Error("一次生成只能使用一个蒙版");
+        const skip = new Set([maskNode.id, maskNode.metadata?.storageKey, mask.storageKey, mask.source.storageKey]);
+        const extras = references.filter((ref) => !skip.has(ref.id) && !skip.has(ref.storageKey || ""));
+        const indices = references.map((ref) => skip.has(ref.id) || skip.has(ref.storageKey || "") ? 0 : extras.indexOf(ref) + 1);
+        return { references: [asSource(maskNode, mask), ...extras], mask, prompt: remapImageReferenceLabels(prompt, indices) };
+    }
     const replaceComposite = (ref: ReferenceImage) => {
         const node = nodeOf(ref);
         const markup = node?.metadata?.imageApiMarkup;

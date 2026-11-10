@@ -4,8 +4,8 @@ import i18n from "@/i18n";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
-import { dataUrlToFile } from "@/lib/image-utils";
-import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { dataUrlToFile, resizeImageDataUrl } from "@/lib/image-utils";
+import { imageReferenceLabel, remapImageReferenceLabels, buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { imageSizePresets, imageSizePresetsForModel, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
@@ -761,7 +761,25 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const nativeMask = isImageApiChannel(requestConfig.baseUrl) && requestConfig.model.startsWith("gpt-image-2");
+    const overlayMask = Boolean(options?.imageApiMask && !nativeMask);
+    if (overlayMask) {
+        const layer = options!.imageApiMask!.overlay;
+        if (!layer) throw new Error("蒙版缺少预览图，请重新创建蒙版");
+        prompt = remapImageReferenceLabels(prompt, references.map((_, index) => index === 0 ? 0 : index + 1));
+        references = [references[0], { id: "mask-overlay", name: "mask.png", type: "image/png", dataUrl: await imageToDataUrl(layer), storageKey: layer.storageKey }, ...references.slice(1)];
+        prompt = i18n.t("canvas.projectPage.maskPrompt", { source: imageReferenceLabel(0), mask: imageReferenceLabel(1), prompt });
+        options = { ...options, imageApiMask: undefined };
+    }
     if (isImageApiChannel(requestConfig.baseUrl)) return requestLocalImages(config, requestConfig, options?.imageApiMask ? prompt : buildImageReferencePromptText(prompt, references), references, options);
+    const dimensions = parseImageDimensions(resolveRequestSize(config.size, config.model || config.imageModel));
+    if (dimensions) {
+        // APIs that follow the primary image instead of size still receive the
+        // selected dimensions. Resize the visual mask with the same geometry.
+        references = await Promise.all(references.map(async (ref, index) => index === 0 || (overlayMask && index === 1)
+            ? { ...ref, dataUrl: await resizeImageDataUrl(await imageToDataUrl(ref), dimensions.width, dimensions.height) }
+            : ref));
+    }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
@@ -840,7 +858,7 @@ async function requestLocalImages(config: AiConfig, requestConfig: AiConfig, pro
         const mask = options?.imageApiMask ? await imageToDataUrl(options.imageApiMask) : undefined;
         const markup = options?.imageApiMarkup ? await imageToDataUrl(options.imageApiMarkup) : undefined;
         const images = options?.imageApiMask
-            ? [await imageToDataUrl(options.imageApiMask.source)]
+            ? [await imageToDataUrl(options.imageApiMask.source), ...await Promise.all(references.slice(1).map((image) => imageToDataUrl(image)))]
             : await Promise.all(references.map((image) => imageToDataUrl(image)));
         const format = (config.outputFormat || "png").toLowerCase();
         if (format === "svg" && (images.length || mask || markup)) throw new Error("矢量 SVG 只支持文生图，不能带参考图、蒙版或标注");

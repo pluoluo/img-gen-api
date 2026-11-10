@@ -349,6 +349,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
                     request.preserve_source_base64 or first_b64,
                     request.mask_base64,
                     item["base64"],
+                    request.size,
                 )
                 item.update(base64=data, url=None, adjusted_size=final_size, upstream_size=upstream_size)
 

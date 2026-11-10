@@ -76,16 +76,26 @@ def preprocess_markup(markup_base64: str, actual_size: str) -> bytes:
         return _png_rgba(layer, (width, height), Image.Resampling.LANCZOS)
 
 
-def composite_outside(source_base64: str, mask_base64: str, generated_base64: str) -> tuple[str, str, str]:
+def composite_outside(source_base64: str, mask_base64: str, generated_base64: str, target_size: str = "auto") -> tuple[str, str, str]:
     with decode_image(source_base64) as source, decode_image(mask_base64, png_mask=True) as mask, decode_image(generated_base64) as generated:
         if mask.size != source.size:
             raise ValueError("合成失败：mask 与原图尺寸不一致")
         upstream_size = f"{generated.width}x{generated.height}"
+        # Match the primary/mask geometry sent upstream instead of shrinking the
+        # completed image back to the original reference size.
+        if target_size and target_size.strip().lower() != "auto":
+            from image_api.services.openai_img import validate_and_adjust_size
+            width, height, _ = validate_and_adjust_size(target_size, source.width, source.height)
+            source = source.resize((width, height), Image.Resampling.LANCZOS)
+            mask = mask.resize((width, height), Image.Resampling.NEAREST)
         resized = generated.resize(source.size, Image.Resampling.LANCZOS)
         # Soft alpha pixels blend; fully protected pixels remain byte-exact RGBA.
         result = Image.composite(resized, source, ImageOps.invert(mask.getchannel("A")))
         output = io.BytesIO()
         result.save(output, format="PNG")
+        final_size = f"{source.width}x{source.height}"
         resized.close()
         result.close()
-        return base64.b64encode(output.getvalue()).decode(), f"{source.width}x{source.height}", upstream_size
+        source.close()
+        mask.close()
+        return base64.b64encode(output.getvalue()).decode(), final_size, upstream_size

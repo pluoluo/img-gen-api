@@ -8,15 +8,14 @@ import { useTranslation } from "react-i18next";
 
 import { applyOptimizedText, buildTextOptimizationConfig, textPromptForOptimization } from "@/lib/canvas/canvas-text-optimization";
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
-import { isImageApiChannel, waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
+import { waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
-import { defaultConfig, resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -2200,28 +2199,38 @@ function InfiniteCanvasPage() {
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
             if (payload.generate && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
             const userPrompt = payload.prompt.trim();
-            const requestConfig = resolveModelRequestConfig(generationConfig, generationConfig.model);
-            const nativeMask = isImageApiChannel(requestConfig.baseUrl) && requestConfig.model.startsWith("gpt-image-2");
-            const prompt = nativeMask ? userPrompt : t("canvas.projectPage.maskPrompt", { source: imageReferenceLabel(0), mask: imageReferenceLabel(1), prompt: userPrompt });
+            const prompt = userPrompt;
             setMaskEditNodeId(null);
             const maskImage = await uploadImage(payload.maskDataUrl);
             const maskNodeId = nanoid();
             const childId = nanoid();
             const source = { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
-            const maskSource = { id: maskNodeId, name: "mask.png", type: maskImage.mimeType || "image/png", dataUrl: maskImage.url, storageKey: maskImage.storageKey };
-            const apiMask = nativeMask ? await uploadImage(payload.apiMaskDataUrl) : null;
-            const references = nativeMask ? [source] : [source, maskSource];
+            const apiMask = await uploadImage(payload.apiMaskDataUrl);
+            const imageApiMask = { storageKey: apiMask.storageKey!, source: { storageKey: source.storageKey, url: source.dataUrl }, overlay: { storageKey: maskImage.storageKey, url: maskImage.url } };
+            if (!payload.generate) {
+                setNodes((prev) => [...prev, {
+                    id: maskNodeId, type: CanvasNodeType.Image, title: t("canvas.projectPage.maskNodeTitle"),
+                    position: { x: node.position.x, y: node.position.y + node.height + 96 },
+                    width: node.width, height: node.height,
+                    metadata: { ...imageMetadata(maskImage), maskLayer: true, imageApiMask },
+                }]);
+                setSelectedNodeIds(new Set([maskNodeId]));
+                setSelectedConnectionId(null);
+                setDialogNodeId(null);
+                return;
+            }
+            const references = [source];
             const generationMetadata = {
                 ...buildImageGenerationMetadata("edit", generationConfig, 1, references),
-                ...(apiMask?.storageKey ? { imageApiMask: { storageKey: apiMask.storageKey, source: { storageKey: source.storageKey, url: source.dataUrl } } } : {}),
+                imageApiMask,
             };
-            const childMetadata = { prompt, ...generationMetadata, ...(payload.generate ? { status: NODE_STATUS_LOADING } : {}) };
+            const childMetadata = { prompt, ...generationMetadata, status: NODE_STATUS_LOADING };
             setNodes((prev) => [
                 ...prev,
                 {
@@ -2231,7 +2240,7 @@ function InfiniteCanvasPage() {
                     position: { x: node.position.x, y: node.position.y + node.height + 96 },
                     width: node.width,
                     height: node.height,
-                    metadata: imageMetadata(maskImage),
+                    metadata: { ...imageMetadata(maskImage), maskLayer: true, imageApiMask },
                 },
                 {
                     id: childId,
@@ -2247,7 +2256,6 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([childId]));
             setSelectedConnectionId(null);
             setDialogNodeId(childId);
-            if (!payload.generate) return;
             setRunningNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
@@ -2637,10 +2645,11 @@ function InfiniteCanvasPage() {
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const reuseImageNode = isImageNode && (overwriteExisting || isEmptyImageNode);
-                    const resolved = resolveImageApiMarkup(sourceNode, nodesRef.current, generationContext.referenceImages);
+                    const resolved = resolveImageApiMarkup(sourceNode, nodesRef.current, generationContext.referenceImages, effectivePrompt);
+                    const imagePrompt = resolved.prompt ?? effectivePrompt;
                     const referenceImages = resolved.references;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), imageApiMask: sourceNode?.metadata?.imageApiMask, imageApiMarkup: resolved.markup };
+                    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), maskLayer: undefined, imageApiMask: resolved.mask, imageApiMarkup: resolved.markup };
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -2650,7 +2659,7 @@ function InfiniteCanvasPage() {
                     const rootNode: CanvasNodeData = {
                         id: rootId,
                         type: CanvasNodeType.Image,
-                        title: effectivePrompt.slice(0, 32) || "Generated Image",
+                        title: imagePrompt.slice(0, 32) || "Generated Image",
                         position: {
                             x: reuseImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + 96,
                             y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
@@ -2658,7 +2667,7 @@ function InfiniteCanvasPage() {
                         width: reuseImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
                         height: reuseImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
                         metadata: {
-                            prompt: effectivePrompt,
+                            prompt: imagePrompt,
                             status: NODE_STATUS_LOADING,
                             images: imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
                             primaryImageId: undefined,
@@ -2713,8 +2722,8 @@ function InfiniteCanvasPage() {
                         imageIds.map(async (imageId) => {
                             try {
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0]);
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, imagePrompt, referenceImages, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0])
+                                    : await requestGeneration({ ...generationConfig, count: "1" }, imagePrompt, { ...imageRequestOptions(rootId, controller.signal, imageId), imageApiMask: generationMetadata.imageApiMask, imageApiMarkup: generationMetadata.imageApiMarkup }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
@@ -3086,7 +3095,7 @@ function InfiniteCanvasPage() {
                 }
 
                 const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, { ...imageRequestOptions(node.id, controller.signal, imageId), imageApiMarkup: node.metadata?.imageApiMarkup || resolvedRetry.markup }).then((items) => items[0])
+                    ? await requestEdit(generationConfig, prompt, retryImages, { ...imageRequestOptions(node.id, controller.signal, imageId), imageApiMask: node.metadata?.imageApiMask || resolvedRetry.mask, imageApiMarkup: node.metadata?.imageApiMarkup || resolvedRetry.markup }).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, imageRequestOptions(node.id, controller.signal, imageId)).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl, { signal: controller.signal });
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
