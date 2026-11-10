@@ -25,3 +25,4 @@ canvas/production-test-results/
 infinite/**/node_modules/
 infinite/**/dist/
 infinite/**/*.tsbuildinfo
+infinite/web/public/smart-mask/

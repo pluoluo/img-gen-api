@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Button, Input, Modal, Slider, Tooltip } from "antd";
-import { Brush, Eraser, ImagePlus, Redo2, RotateCcw, Undo2, WandSparkles, ZoomIn, ZoomOut } from "lucide-react";
+import { Button, Input, Modal, Progress, Slider, Tooltip, theme as antdTheme } from "antd";
+import { Brush, Eraser, ImagePlus, Redo2, RotateCcw, Undo2, LoaderCircle, Contrast, Scan, Plus, Minus, WandSparkles, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { readImageMeta } from "@/lib/image-utils";
+import { useSmartMask } from "@/components/canvas/use-smart-mask";
+import type { BinaryMask } from "@/lib/smart-mask";
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 
 export type CanvasImageMaskEditPayload = {
@@ -17,6 +19,7 @@ export type CanvasImageMaskEditPayload = {
 type DrawMode = "paint" | "erase";
 type Point = { x: number; y: number };
 type MaskStroke = { mode: DrawMode; size: number; points: Point[] };
+type MaskAction = MaskStroke | { mode: DrawMode; region: BinaryMask };
 type BrushPreview = { x: number; y: number; size: number; adjusting: boolean };
 
 const defaultBrushSize = 100;
@@ -25,17 +28,21 @@ const maskOverlayAlpha = 0.4;
 
 export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
     const { t } = useTranslation();
+    const { token } = antdTheme.useToken();
+    const smart = useSmartMask(dataUrl, open);
+    const smartCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [pointLabel, setPointLabel] = useState<0 | 1>(1);
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
     const drawingRef = useRef<{ active: boolean; stroke: MaskStroke | null }>({ active: false, stroke: null });
     const brushAdjustRef = useRef<{ active: boolean; pointerId: number; startX: number; startSize: number; previewX: number; previewY: number } | null>(null);
-    const historyRef = useRef<MaskStroke[]>([]);
-    const redoRef = useRef<MaskStroke[]>([]);
+    const historyRef = useRef<MaskAction[]>([]);
+    const redoRef = useRef<MaskAction[]>([]);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [prompt, setPrompt] = useState("");
     const [brushSize, setBrushSize] = useState(defaultBrushSize);
-    const [mode, setMode] = useState<DrawMode>("paint");
+    const [mode, setMode] = useState<DrawMode | "smart">("paint");
     const [error, setError] = useState("");
     const [historySize, setHistorySize] = useState(0);
     const [redoSize, setRedoSize] = useState(0);
@@ -53,6 +60,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setBrushPreview(null);
         historyRef.current = [];
         redoRef.current = [];
+        setPointLabel(1);
         brushAdjustRef.current = null;
         drawingRef.current = { active: false, stroke: null };
         void readImageMeta(dataUrl).then(setImage);
@@ -62,6 +70,31 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         clearCanvas(maskCanvasRef.current);
         clearCanvas(previewCanvasRef.current);
     }, [image]);
+
+    useEffect(() => {
+        const canvas = smartCanvasRef.current;
+        clearCanvas(canvas);
+        const context = canvas?.getContext("2d");
+        if (context && smart.selection) drawBinaryMask(context, smart.selection, maskOverlayColor);
+    }, [smart.selection, image]);
+
+    const changeMode = (next: DrawMode | "smart") => {
+        setMode(next); setBrushPreview(null);
+        if (next === "smart") {
+            if (smart.state.stage === "idle") smart.prepare();
+        } else {
+            smart.clear();
+            if (smart.busy) smart.stop();
+        }
+    };
+    const applySelection = (operation: DrawMode) => {
+        if (!smart.selection || smart.busy) return;
+        historyRef.current.push({ mode: operation, region: smart.selection });
+        redoRef.current = [];
+        setHistorySize(historyRef.current.length); setRedoSize(0);
+        replayMask(historyRef.current, maskCanvasRef.current, previewCanvasRef.current);
+        smart.clear(); setPointLabel(1); setError("");
+    };
 
     const draw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const point = readCanvasPoint(event.currentTarget, event.clientX, event.clientY);
@@ -82,6 +115,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     };
 
     const updateBrushPreview = (event: ReactPointerEvent<HTMLCanvasElement>, size = brushSize, adjusting = false) => {
+        if (mode === "smart") return;
         setBrushPreview({
             x: event.clientX,
             y: event.clientY,
@@ -91,6 +125,13 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     };
 
     const startDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+        if (mode === "smart") {
+            if (event.button !== 0 && event.button !== 2) return;
+            event.preventDefault(); event.stopPropagation();
+            const point = readCanvasPoint(event.currentTarget, event.clientX, event.clientY);
+            smart.predict({ x: Math.max(0, Math.min(1, point.x / event.currentTarget.width)), y: Math.max(0, Math.min(1, point.y / event.currentTarget.height)), label: event.button === 2 ? 0 : pointLabel });
+            return;
+        }
         if ((event.button === 0 || event.button === 2) && event.altKey) {
             event.preventDefault();
             event.stopPropagation();
@@ -155,6 +196,8 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
     };
 
     const undoMask = useCallback(() => {
+        if (smart.points.length) { smart.undoPoint(); return; }
+        if (smart.busy) return;
         if (drawingRef.current.active || !historyRef.current.length) return;
         const stroke = historyRef.current.pop();
         if (stroke) redoRef.current.push(stroke);
@@ -162,9 +205,10 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setRedoSize(redoRef.current.length);
         replayMask(historyRef.current, maskCanvasRef.current, previewCanvasRef.current);
         setError("");
-    }, []);
+    }, [smart.busy, smart.points.length, smart.undoPoint]);
 
     const redoMask = useCallback(() => {
+        if (smart.busy || smart.selection) return;
         if (drawingRef.current.active || !redoRef.current.length) return;
         const stroke = redoRef.current.pop();
         if (stroke) historyRef.current.push(stroke);
@@ -172,7 +216,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setRedoSize(redoRef.current.length);
         replayMask(historyRef.current, maskCanvasRef.current, previewCanvasRef.current);
         setError("");
-    }, []);
+    }, [smart.busy, smart.selection]);
 
     const resetMask = () => {
         historyRef.current = [];
@@ -181,6 +225,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setRedoSize(0);
         clearCanvas(maskCanvasRef.current);
         clearCanvas(previewCanvasRef.current);
+        smart.clear(); setPointLabel(1);
         setError("");
     };
 
@@ -222,13 +267,17 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         onConfirm({ prompt: nextPrompt, maskDataUrl: buildMaskOverlay(element, canvas), apiMaskDataUrl: apiMask.toDataURL("image/png"), generate });
     };
 
+    const stageKeys = { idle: "smartHint", loading: "smartLoading", compiling: "smartCompiling", preprocessing: "smartPreprocessing", encoding: "smartEncoding", selecting: "smartSelecting", rendering: "smartRendering", ready: "smartHint", error: "smartError" } as const;
+    const stageText = t(`canvas.editors.${stageKeys[smart.state.stage]}`, { progress: smart.state.stage === "loading" && smart.state.progress !== undefined ? `${Math.round(smart.state.progress)}%` : "" });
+    const elapsedText = t("canvas.editors.smartElapsed", { seconds: smart.elapsed });
+
     return (
         <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={980} centered destroyOnHidden transitionName="" maskTransitionName="">
             <div className="grid gap-5 lg:grid-cols-[minmax(360px,1fr)_320px]" data-canvas-no-zoom>
                 <div
                     ref={viewport.viewportRef}
                     {...viewport.panHandlers}
-                    className={`relative h-[min(68vh,720px)] min-h-[360px] rounded-xl border border-black/10 bg-transparent dark:border-white/10 ${viewport.scrollClassName} ${viewport.isPanning ? "cursor-grabbing" : viewport.spacePressed ? "cursor-grab" : ""}`}
+                    className={`relative h-[min(44vh,420px)] min-h-[240px] rounded-xl border border-black/10 bg-transparent dark:border-white/10 lg:h-[min(68vh,720px)] lg:min-h-[360px] ${viewport.scrollClassName} ${viewport.isPanning ? "cursor-grabbing" : viewport.spacePressed ? "cursor-grab" : ""}`}
                 >
                     <div className="relative" style={viewport.contentStyle}>
                         <div ref={viewport.stageRef} className="absolute isolate overflow-hidden rounded-lg bg-transparent select-none [backface-visibility:hidden] [contain:layout_paint] [transform:translateZ(0)]" style={viewport.stageStyle}>
@@ -241,7 +290,8 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                                             ref={previewCanvasRef}
                                             width={image.width}
                                             height={image.height}
-                                            className="absolute inset-0 h-full w-full cursor-none touch-none"
+                                            className={`absolute inset-0 h-full w-full touch-none ${mode === "smart" ? "cursor-crosshair" : "cursor-none"}`}
+                                            aria-label={t("canvas.editors.maskCanvas")}
                                             style={{ opacity: maskOverlayAlpha }}
                                             onPointerDown={startDraw}
                                             onPointerMove={moveDraw}
@@ -253,11 +303,21 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                                             }}
                                             onContextMenu={(event) => event.preventDefault()}
                                         />
+                                        <canvas ref={smartCanvasRef} hidden={mode !== "smart"} width={image.width} height={image.height} className="pointer-events-none absolute inset-0 h-full w-full" style={{ opacity: maskOverlayAlpha }} />
+                                        {mode === "smart" ? smart.points.map((point, index) => (
+                                            <span key={index} className="pointer-events-none absolute flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2" style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%`, color: point.label ? token.colorSuccess : token.colorError, background: token.colorBgElevated, borderColor: "currentColor" }}>
+                                                {point.label ? <Plus className="size-3" /> : <Minus className="size-3" />}
+                                            </span>
+                                        )) : null}
                                     </div>
                                 </>
                             ) : null}
                         </div>
                     </div>
+                    {mode === "smart" && smart.busy ? <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: token.colorBgElevated, color: token.colorText }} aria-hidden="true">
+                        <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />
+                        <span className="min-w-0 flex-1">{stageText}</span><span className="shrink-0 tabular-nums">{elapsedText}</span>
+                    </div> : null}
                 </div>
                 {brushPreview
                     ? createPortal(
@@ -278,21 +338,65 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                         <div className="mt-2 text-xs leading-5 opacity-55">{t("canvas.editors.maskHint")}</div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                        <Button type={mode === "paint" ? "primary" : "default"} icon={<Brush className="size-4" />} onClick={() => setMode("paint")}>
+                    <div className="grid grid-cols-3 gap-2">
+                        <Button type={mode === "smart" ? "primary" : "text"} aria-pressed={mode === "smart"} icon={<Scan className="size-4" />} onClick={() => changeMode("smart")}>
+                            {t("canvas.editors.smartSelect")}
+                        </Button>
+                        <Button type={mode === "paint" ? "primary" : "text"} aria-pressed={mode === "paint"} icon={<Brush className="size-4" />} onClick={() => changeMode("paint")}>
                             {t("canvas.editors.brush")}
                         </Button>
-                        <Button type={mode === "erase" ? "primary" : "default"} icon={<Eraser className="size-4" />} onClick={() => setMode("erase")}>
+                        <Button type={mode === "erase" ? "primary" : "text"} aria-pressed={mode === "erase"} icon={<Eraser className="size-4" />} onClick={() => changeMode("erase")}>
                             {t("canvas.editors.erase")}
                         </Button>
                     </div>
 
+                    {mode === "smart" ? (
+                        <div className="space-y-2" aria-busy={smart.busy} data-smart-mask-stage={smart.state.stage} data-smart-mask-backend={smart.state.backend}>
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex gap-1">
+                                    <Button type={pointLabel === 1 ? "primary" : "text"} aria-pressed={pointLabel === 1} size="small" icon={<Plus className="size-3" />} onClick={() => setPointLabel(1)}>{t("canvas.editors.smartInclude")}</Button>
+                                    <Button type={pointLabel === 0 ? "primary" : "text"} aria-pressed={pointLabel === 0} size="small" icon={<Minus className="size-3" />} disabled={!smart.points.length} onClick={() => setPointLabel(0)}>{t("canvas.editors.smartExclude")}</Button>
+                                </div>
+                                {smart.state.backend ? <span className="text-xs opacity-70">{smart.state.backend === "webgpu" ? "GPU" : "CPU"}</span> : null}
+                            </div>
+                            <div className="text-xs font-medium">SAM 2.1 Tiny</div>
+                            <div className="flex items-start gap-2 text-xs leading-5" role="status" aria-live="polite">
+                                {smart.busy ? <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none" /> : null}
+                                <span className="flex-1">{stageText}</span>
+                            </div>
+                            {smart.busy ? <div className="text-xs tabular-nums" style={{ color: token.colorTextSecondary }}>{elapsedText}</div> : null}
+                            {smart.state.stage === "loading" && smart.state.progress !== undefined ? <Progress percent={Math.round(smart.state.progress)} showInfo={false} size="small" aria-label={t("canvas.editors.smartDownloadProgress")} /> : null}
+                            {smart.busy && smart.points.length ? <div className="text-xs" style={{ color: token.colorTextSecondary }}>{t("canvas.editors.smartQueued", { count: smart.points.length })}</div> : null}
+                            {smart.state.error === "includeFirst" ? <div className="text-xs" style={{ color: token.colorWarningText }}>{t("canvas.editors.smartIncludeFirst")}</div> : null}
+                            {smart.candidates.length > 1 ? <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t("canvas.editors.smartCandidates")}>
+                                <span className="mr-1 text-xs">{t("canvas.editors.smartCandidates")}</span>
+                                {smart.candidates.map((candidate, index) => <Button key={candidate.index} size="small" type={smart.selected === candidate.index ? "primary" : "text"} aria-pressed={smart.selected === candidate.index} disabled={smart.busy} onClick={() => smart.chooseCandidate(candidate.index)}>{t("canvas.editors.smartCandidate", { index: index + 1 })}</Button>)}
+                            </div> : null}
+                            {smart.candidates.find(candidate => candidate.index === smart.selected)?.misses ? <div className="text-xs leading-5" style={{ color: token.colorWarningText }}>{t("canvas.editors.smartConflict")}</div> : null}
+                            {smart.state.stage === "error" ? <div className="space-y-1">
+                                <details className="text-xs break-words" style={{ color: token.colorError }}><summary>{t("canvas.editors.smartErrorDetails")}</summary>{smart.state.error}</details>
+                                <Button size="small" onClick={() => smart.prepare(true)}>{t("canvas.editors.smartCpuRetry")}</Button>
+                            </div> : null}
+                            <div className="flex flex-wrap gap-1">
+                                <Button type="text" size="small" icon={<Contrast className="size-3" />} disabled={!smart.selection || smart.busy} onClick={smart.invert}>{t("canvas.editors.smartInvert")}</Button>
+                                <Button size="small" disabled={!smart.selection || smart.busy} onClick={() => applySelection("paint")}>{t("canvas.editors.smartAdd")}</Button>
+                                <Button size="small" disabled={!smart.selection || smart.busy} onClick={() => applySelection("erase")}>{t("canvas.editors.smartSubtract")}</Button>
+                                <Button type="text" size="small" disabled={!smart.points.length} onClick={smart.undoPoint}>{t("canvas.editors.smartUndoPoint")}</Button>
+                                <Button type="text" size="small" disabled={!smart.points.length} onClick={() => { smart.clear(); setPointLabel(1); }}>{t("canvas.editors.smartClear")}</Button>
+                                {smart.state.backend === "webgpu" && smart.state.stage !== "error" ? <Button type="text" size="small" onClick={() => smart.prepare(true)}>{t("canvas.editors.smartUseCpu")}</Button> : null}
+                                {smart.busy ? <Button type="text" size="small" onClick={smart.stop}>{t("canvas.editors.smartStop")}</Button> : null}
+                                {smart.state.stage === "idle" ? <Button size="small" onClick={() => smart.prepare()}>{t("canvas.editors.smartStart")}</Button> : null}
+                            </div>
+                            {smart.selection ? <div className="text-xs opacity-70">{t("canvas.editors.smartPending")}</div> : null}
+                        </div>
+                    ) : null}
+
                     <div className="flex items-center justify-between rounded-lg border border-black/10 px-2 py-1 dark:border-white/10">
                         <Tooltip title={t("canvas.editors.undoMaskTitle")}>
-                            <Button type="text" icon={<Undo2 className="size-4" />} disabled={!historySize} aria-label={t("canvas.editors.undoMask")} onClick={undoMask} />
+                            <Button type="text" icon={<Undo2 className="size-4" />} disabled={!smart.points.length && (!historySize || smart.busy)} aria-label={t("canvas.editors.undoMask")} onClick={undoMask} />
                         </Tooltip>
                         <Tooltip title={t("canvas.editors.redoMaskTitle")}>
-                            <Button type="text" icon={<Redo2 className="size-4" />} disabled={!redoSize} aria-label={t("canvas.editors.redoMask")} onClick={redoMask} />
+                            <Button type="text" icon={<Redo2 className="size-4" />} disabled={!redoSize || smart.busy || Boolean(smart.selection)} aria-label={t("canvas.editors.redoMask")} onClick={redoMask} />
                         </Tooltip>
                         <div className="flex items-center gap-1">
                             <Tooltip title={t("canvas.editors.zoomOut")}>
@@ -307,13 +411,13 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                         </div>
                     </div>
 
-                    <div className="space-y-2">
+                    {mode !== "smart" ? <div className="space-y-2">
                         <div className="flex items-center justify-between text-sm">
                             <span className="font-medium opacity-75">{t("canvas.editors.brushSize")}</span>
                             <span className="font-semibold">{brushSize}px</span>
                         </div>
                         <Slider min={8} max={160} step={2} value={brushSize} onChange={setBrushSize} />
-                    </div>
+                    </div> : null}
 
                     <div className="space-y-2">
                         <div className="text-sm font-medium opacity-75">{t("canvas.editors.maskInstructions")}</div>
@@ -331,14 +435,14 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                     </div>
 
                     <div className="mt-auto flex items-center justify-between gap-2">
-                        <Button icon={<RotateCcw className="size-4" />} onClick={resetMask}>
+                        <Button icon={<RotateCcw className="size-4" />} disabled={smart.busy} onClick={resetMask}>
                             {t("canvas.editors.reset")}
                         </Button>
                         <div className="flex items-center gap-2">
-                            <Button icon={<ImagePlus className="size-4" />} onClick={() => submit(false)}>
+                            <Button icon={<ImagePlus className="size-4" />} disabled={smart.busy || Boolean(smart.selection)} onClick={() => submit(false)}>
                                 {t("canvas.editors.maskExport")}
                             </Button>
-                            <Button type="primary" icon={<WandSparkles className="size-4" />} onClick={() => submit(true)}>
+                            <Button type="primary" icon={<WandSparkles className="size-4" />} disabled={smart.busy || Boolean(smart.selection)} onClick={() => submit(true)}>
                                 {t("canvas.editors.maskGenerate")}
                             </Button>
                         </div>
@@ -398,13 +502,19 @@ function configurePreviewStrokeContext(context: CanvasRenderingContext2D, stroke
     context.fillStyle = maskOverlayColor;
 }
 
-function replayMask(strokes: MaskStroke[], maskCanvas: HTMLCanvasElement | null, previewCanvas: HTMLCanvasElement | null) {
+function replayMask(strokes: MaskAction[], maskCanvas: HTMLCanvasElement | null, previewCanvas: HTMLCanvasElement | null) {
     const context = maskCanvas?.getContext("2d", { willReadFrequently: true });
     const previewContext = previewCanvas?.getContext("2d");
     if (!maskCanvas || !context || !previewCanvas || !previewContext) return;
     context.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
     previewContext.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
     for (const stroke of strokes) {
+        if ("region" in stroke) {
+            context.globalCompositeOperation = previewContext.globalCompositeOperation = stroke.mode === "paint" ? "source-over" : "destination-out";
+            drawBinaryMask(context, stroke.region, "black");
+            drawBinaryMask(previewContext, stroke.region, maskOverlayColor);
+            continue;
+        }
         configureStrokeContext(context, stroke);
         configurePreviewStrokeContext(previewContext, stroke);
         stroke.points.forEach((point, index) => {
@@ -444,4 +554,16 @@ function buildMaskOverlay(image: HTMLImageElement, selectionCanvas: HTMLCanvasEl
     context.globalAlpha = maskOverlayAlpha;
     context.drawImage(overlay, 0, 0);
     return canvas.toDataURL("image/png");
+}
+
+function drawBinaryMask(context: CanvasRenderingContext2D, mask: BinaryMask, color: string) {
+    const canvas = document.createElement("canvas");
+    canvas.width = mask.width; canvas.height = mask.height;
+    const target = canvas.getContext("2d")!;
+    const pixels = target.createImageData(mask.width, mask.height);
+    for (let index = 0; index < mask.data.length; index++) pixels.data[index * 4 + 3] = mask.data[index] ? 255 : 0;
+    target.putImageData(pixels, 0, 0);
+    target.globalCompositeOperation = "source-in";
+    target.fillStyle = color; target.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(canvas, 0, 0, context.canvas.width, context.canvas.height);
 }

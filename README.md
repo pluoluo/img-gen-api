@@ -87,7 +87,11 @@ venv/bin/python scripts/build_infinite.py
 
 脚本从本仓库 `infinite/web/` 安装锁定的依赖、检查类型并构建，将静态文件发布到 `frontend/infinite`。首次部署以及前端更新后都需要执行；仅 `git pull` 不会自动更新已部署页面。构建产物不提交到 Git，其他环境可直接从同一仓库重建，无需相邻的 infinite-canvas 目录。
 
+构建还会下载并校验智能蒙版使用的固定版本 SAM 2.1 Tiny ONNX 权重，缓存到已忽略的 `infinite/web/public/smart-mask/`，并复制浏览器推理文件。首次构建需要访问 Hugging Face；内网构建可预先复制同一版本的缓存目录，并通过内网源安装锁定依赖，再执行构建。使用时模型由当前站点提供，不需要访问外部模型网站、安装 Python 推理环境或提供分割 API Key。HTTPS 下有可用 WebGPU 时使用 GPU，普通局域网 HTTP 使用 CPU；GPU 初始化失败会切换 CPU。智能选区按需加载，GPU 支持半精度时权重约 78 MB，否则约 156 MB，CPU 量化权重约 62 MB（均不含推理运行库）；首次图片分析速度取决于设备。下载显示真实百分比，初始化、分析和选区计算显示阶段及耗时；支持补点排队、撤销点、候选切换及手动切换 CPU。
+
 ### 4. 启动
+
+Linux 本机可选 HTTPS 入口由 `scripts/setup_image_api_https.py` 配置，需要 nginx、systemd 用户服务及浏览器信任的域名证书。运行 `venv/bin/python scripts/setup_image_api_https.py --help` 查看参数；代理空闲超时必须显式提供经确认的秒数。脚本默认只准备和校验配置，附加 `--enable` 才启动独立入口；已有 HTTP 服务保留，证书文件更新后自动校验并重载代理，不负责申请证书。配置与日志保存在当前用户目录，私钥不复制进仓库。HTTP/HTTPS 或端口变化会形成不同的浏览器存储空间，切换前应备份画布、素材与配置。
 
 本仓库 systemd 用户服务（生产）：
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from prepare_infinite_smart_mask import prepare as prepare_smart_mask
 
 
 def main():
@@ -24,6 +25,7 @@ def main():
     releases.mkdir(exist_ok=True)
     release = Path(tempfile.mkdtemp(prefix="release-", dir=releases))
     subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=web, check=True)
+    prepare_smart_mask(web)
     subprocess.run(["bun", "run", "typecheck"], cwd=web, check=True)
     env = {**os.environ, "VITE_BASE": "/infinite/", "VITE_IMAGE_API": "1"}
     subprocess.run(["bun", "run", "build", "--outDir", str(release)], cwd=web, env=env, check=True)

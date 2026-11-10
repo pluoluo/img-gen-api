@@ -18,3 +18,5 @@ venv/bin/python scripts/build_infinite.py
 ```
 
 只运行网站不需要另外启动 Vite。Canvas Agent 和代理是可选独立进程，其配置与数据不随 Git 同步；源码已在本目录内。
+
+智能蒙版点选使用 [SAM 2.1 Tiny 的 ONNX 权重](https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX)（原模型来自 [Meta SAM 2](https://github.com/facebookresearch/sam2)，Apache-2.0）和 [Transformers.js](https://github.com/huggingface/transformers.js)（Apache-2.0），浏览器推理由 [ONNX Runtime](https://github.com/microsoft/onnxruntime)（MIT）执行。构建脚本固定权重版本并附带模型说明、Apache-2.0 许可和来源声明；ONNX Runtime 许可保留在 `web/public/onnxruntime-LICENSE.txt`。权重和推理构建文件不进入 Git。

@@ -41,6 +41,7 @@ function localPluginsManifest(): Plugin {
 export default defineConfig({
     base: process.env.VITE_BASE || "/",
     plugins: [react(), localPluginsManifest()],
+    worker: { format: "es" },
     resolve: {
         alias: {
             "@": resolve(webDir, "src"),

@@ -1,0 +1,66 @@
+{
+  "repo": "onnx-community/sam2.1-hiera-tiny-ONNX",
+  "revision": "814a066640debee5a91e70aa401fb8e17e030503",
+  "files": {
+    "config.json": {
+      "bytes": 5814,
+      "sha256": "9813c595dfbbe73c6b40ed269a2d6252915f538b8cdef5955f48c79716414cce"
+    },
+    "processor_config.json": {
+      "bytes": 932,
+      "sha256": "17756f63e17f4e6a8af56dc28dabbddfa23401384b5b2e56367dc1c468db57a5"
+    },
+    "preprocessor_config.json": {
+      "bytes": 749,
+      "sha256": "240c886b428d36b63bbb51b0c17ad4d2668d83ba851a04f09880a2b93f0b7349"
+    },
+    "onnx/vision_encoder.onnx": {
+      "bytes": 354238,
+      "sha256": "4f30aacd3aaefbca81a0b7fe4c1fc96345570ea0a6f80ced599493d1b3be2e8c"
+    },
+    "onnx/vision_encoder.onnx_data": {
+      "bytes": 134084864,
+      "sha256": "e83df9866a5afe68ea7f0f721f18f65137fc3acbf0da1c74e946d363e09c69cc"
+    },
+    "onnx/vision_encoder_fp16.onnx": {
+      "bytes": 314925,
+      "sha256": "7773e79d589dada8e1e630cc7eb18b17b2c5b4faeb1eaab5ebf9df618ecbd50a"
+    },
+    "onnx/vision_encoder_fp16.onnx_data": {
+      "bytes": 67005504,
+      "sha256": "a4dd3759e9b6a476d991fb3493787992e78777e51462695e1bede71ae258103e"
+    },
+    "onnx/vision_encoder_quantized.onnx": {
+      "bytes": 441167,
+      "sha256": "8800fdd04b9045cb6060ba8962b83c78ce9bb0976da8f030afa073467a888524"
+    },
+    "onnx/vision_encoder_quantized.onnx_data": {
+      "bytes": 52573088,
+      "sha256": "ea1f677596dc82cef0dc317d78135d892f4b26e20a4439f899aa58d84965b324"
+    },
+    "onnx/prompt_encoder_mask_decoder.onnx": {
+      "bytes": 213114,
+      "sha256": "874414704c5d686db7d206a35f6e15d26563d50c8c4468fccc6739bd7e491dcf"
+    },
+    "onnx/prompt_encoder_mask_decoder.onnx_data": {
+      "bytes": 20958208,
+      "sha256": "e9874d900dd4134ed60eab1e97910327c2419e0b2954485d8fd6e7f1a1470f47"
+    },
+    "onnx/prompt_encoder_mask_decoder_fp16.onnx": {
+      "bytes": 229799,
+      "sha256": "00ac7200451f246e8307aa1a1648113f47dc45625738406403a0e6b86c69fc55"
+    },
+    "onnx/prompt_encoder_mask_decoder_fp16.onnx_data": {
+      "bytes": 10454016,
+      "sha256": "027b457a53f5bd76bb401c59555448451d04b4eab6d2f6a6758406b40133ee2c"
+    },
+    "onnx/prompt_encoder_mask_decoder_quantized.onnx": {
+      "bytes": 290416,
+      "sha256": "a5f31dba5a7f03203dc3a130fdd7766f0fea952eb4aac1f55458549170eb51ff"
+    },
+    "onnx/prompt_encoder_mask_decoder_quantized.onnx_data": {
+      "bytes": 8662016,
+      "sha256": "fdb3179a32388267a944a416c0f992c77a138b69a4bfd94f0bbf7089430d7489"
+    }
+  }
+}
