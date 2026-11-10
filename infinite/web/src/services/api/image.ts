@@ -762,6 +762,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const nativeMask = isImageApiChannel(requestConfig.baseUrl) && requestConfig.model.startsWith("gpt-image-2");
+    if (options?.imageApiMask && options?.imageApiMarkup) throw new Error("请勿同时使用标注和蒙版");
+    if (options?.imageApiMarkup && !nativeMask) {
+        const composite = options.imageApiMarkup.overlay;
+        if (!composite) throw new Error("标注缺少合成预览，请重新保存标注");
+        references = [{ ...references[0], storageKey: composite.storageKey, dataUrl: await imageToDataUrl(composite) }, ...references.slice(1)];
+        options = { ...options, imageApiMarkup: undefined };
+    }
     const overlayMask = Boolean(options?.imageApiMask && !nativeMask);
     if (overlayMask) {
         const layer = options!.imageApiMask!.overlay;

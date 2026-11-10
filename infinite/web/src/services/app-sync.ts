@@ -38,8 +38,8 @@ type SyncDomainOptions<T> = {
     label: string;
     localData: () => Promise<T>;
     emptyData: T;
-    mergeData: (local: T, remote: T) => T;
-    applyData?: (data: T) => Promise<void>;
+    mergeData: (local: T, remote: T, baseline?: T) => T;
+    applyData: (data: T, baseline: T) => Promise<T>;
 };
 
 type SyncDomainResult<T> = {
@@ -95,31 +95,41 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
                 return { projects, deleted: deletedProjects };
             },
             mergeData: mergeCanvasData,
-            applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects, data.deleted),
+            applyData: async (data, baseline) => {
+                const { projects, deletedProjects } = useCanvasStore.getState();
+                const merged = mergeCanvasData({ projects, deleted: deletedProjects }, data, baseline);
+                useCanvasStore.getState().replaceProjects(merged.projects, merged.deleted);
+                return merged;
+            },
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
             label: "我的资产",
             emptyData: { assets: [] },
             localData: async () => ({ assets: useAssetStore.getState().assets }),
-            mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
-            applyData: async (data) => useAssetStore.getState().replaceAssets(await Promise.all(data.assets.map(hydrateAsset))),
+            mergeData: (local, remote, baseline) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt", baseline?.assets) }),
+            applyData: async (data, baseline) => {
+                const assets = await Promise.all(data.assets.map(hydrateAsset));
+                const merged = { assets: mergeById(useAssetStore.getState().assets, assets, "updatedAt", baseline.assets) };
+                useAssetStore.getState().replaceAssets(merged.assets);
+                return merged;
+            },
         }),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "image-workbench",
             label: "生图工作台",
             emptyData: { logs: [] },
             localData: async () => ({ logs: await readStoredLogs(imageLogStore) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
-            applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs),
+            mergeData: (local, remote, baseline) => ({ logs: mergeById(local.logs, remote.logs, "createdAt", baseline?.logs) }),
+            applyData: async (data, baseline) => ({ logs: await mergeStoredLogs("image_generation_logs", data.logs, baseline.logs) }),
         }),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "video-workbench",
             label: "视频创作台",
             emptyData: { logs: [] },
             localData: async () => ({ logs: await readStoredLogs(videoLogStore) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
-            applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs),
+            mergeData: (local, remote, baseline) => ({ logs: mergeById(local.logs, remote.logs, "createdAt", baseline?.logs) }),
+            applyData: async (data, baseline) => ({ logs: await mergeStoredLogs("video_generation_logs", data.logs, baseline.logs) }),
         }),
     ]);
 
@@ -145,13 +155,13 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
         const remoteManifest = await readDomainManifest(config, options.key, options.emptyData);
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取本地数据", status: "active" });
         const localData = await options.localData();
-        const mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
+        let mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
 
         if (remoteManifest) {
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "下载缺失媒体", status: "active" });
             await downloadMissingFiles(config, options.key, mergedData, remoteManifest.files, onProgress);
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "写入本地合并结果", status: "active" });
-            await options.applyData?.(mergedData);
+            mergedData = await options.applyData(mergedData, localData);
         }
 
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "上传新增媒体", status: "active" });
@@ -287,15 +297,32 @@ async function readStoredLogs(store: LogStore) {
     return logs;
 }
 
-async function replaceStoredLogs(store: LogStore, logs: StoredLog[]) {
-    await store.clear();
-    await runWithConcurrency(logs, FILE_CONCURRENCY, async (log) => {
-        const id = getStringField(log, "id");
-        if (id) await store.setItem(id, log);
+// One read/write transaction prevents a task completion in another tab from
+// being erased between reading the logs and writing the sync merge.
+async function mergeStoredLogs(storeName: string, incoming: StoredLog[], baseline: StoredLog[]) {
+    return new Promise<StoredLog[]>((resolve, reject) => {
+        const request = indexedDB.open("infinite-canvas");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+            const db = request.result;
+            const transaction = db.transaction(storeName, "readwrite");
+            const store = transaction.objectStore(storeName);
+            const read = store.getAll();
+            let merged: StoredLog[] = [];
+            read.onsuccess = () => {
+                merged = mergeById(read.result.filter((value) => value && typeof value === "object"), incoming, "createdAt", baseline);
+                for (const log of merged) {
+                    const id = getStringField(log, "id");
+                    if (id) store.put(log, id);
+                }
+            };
+            transaction.oncomplete = () => { db.close(); resolve(merged); };
+            transaction.onabort = () => { db.close(); reject(transaction.error); };
+        };
     });
 }
 
-function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData): CanvasDomainData {
+function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData, baseline?: CanvasDomainData): CanvasDomainData {
     const localDeleted = local.deleted || [];
     const remoteDeleted = remote.deleted || [];
     const deletedAtById = new Map<string, string>();
@@ -305,7 +332,7 @@ function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData): Can
         if (!current || item.deletedAt >= current) deletedAtById.set(item.id, item.deletedAt);
     }
 
-    const projects = mergeById(local.projects || [], remote.projects || [], "updatedAt").filter((project) => {
+    const projects = mergeById(local.projects || [], remote.projects || [], "updatedAt", baseline?.projects).filter((project) => {
         const deletedAt = deletedAtById.get(project.id);
         if (!deletedAt) return true;
         if (getTime(project as Record<string, unknown>, "updatedAt") > Date.parse(deletedAt)) {
@@ -321,17 +348,28 @@ function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData): Can
     };
 }
 
-function mergeById<T extends { id?: string }>(local: T[], remote: T[], timeKey: string) {
+function mergeById<T extends { id?: string }>(local: T[], remote: T[], timeKey: string, baseline?: T[]) {
     const items = new Map<string, T>();
     remote.forEach((item) => {
         const id = item.id || "";
         if (id) items.set(id, item);
     });
+    const before = baseline && new Map(baseline.map((item) => [item.id, item]));
+    if (before) {
+        const currentIds = new Set(local.map((item) => item.id));
+        for (const id of before.keys()) if (id && !currentIds.has(id)) items.delete(id);
+    }
     local.forEach((item) => {
         const id = item.id || "";
         if (!id) return;
         const current = items.get(id);
-        if (!current || getTime(item as Record<string, unknown>, timeKey) >= getTime(current as Record<string, unknown>, timeKey)) items.set(id, item);
+        if (before) {
+            // A job's createdAt stays unchanged when it completes. Compare the
+            // record itself so in-flight changes win over the earlier merge.
+            if (JSON.stringify(before.get(id)) !== JSON.stringify(item)) items.set(id, item);
+        } else if (!current || getTime(item as Record<string, unknown>, timeKey) >= getTime(current as Record<string, unknown>, timeKey)) {
+            items.set(id, item);
+        }
     });
     return Array.from(items.values()).sort((a, b) => getTime(b as Record<string, unknown>, timeKey) - getTime(a as Record<string, unknown>, timeKey));
 }

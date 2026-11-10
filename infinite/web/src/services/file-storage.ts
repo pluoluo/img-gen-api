@@ -53,11 +53,14 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 
 export async function cleanupUnusedMedia(usedData: unknown) {
     const usedKeys = collectMediaStorageKeys(usedData);
+    await Promise.all(["image_generation_logs", "video_generation_logs", "image_api_workbench_jobs"].map((storeName) =>
+        localforage.createInstance({ name: "infinite-canvas", storeName }).iterate((value) => { collectMediaStorageKeys(value, usedKeys); }),
+    ));
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         if (!usedKeys.has(key)) unused.push(key);
     });
-    await Promise.all(unused.map((key) => store.removeItem(key)));
+    await deleteStoredMedia(unused);
 }
 
 export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()) {

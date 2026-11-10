@@ -1,5 +1,5 @@
 import { getNodeSpec, NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { UploadedImage } from "@/services/image-storage";
 import type { UploadedFile } from "@/services/file-storage";
@@ -26,6 +26,27 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
 
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
     return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
+}
+
+export function removeBatchImage(node: CanvasNodeData, imageId: string): CanvasNodeData {
+    const previous = node.metadata?.images || [];
+    const images = previous.filter((image) => image.id !== imageId);
+    const metadata = { ...node.metadata, images, count: images.length };
+    if ((node.metadata?.primaryImageId || previous[0]?.id) !== imageId) return { ...node, metadata };
+    const primary = images.find((image) => image.content) || images[0];
+    const edge = Math.max(node.width, node.height);
+    const size = primary?.content && !metadata.freeResize ? fitNodeSize(primary.naturalWidth, primary.naturalHeight, edge, edge) : { width: node.width, height: node.height };
+    return {
+        ...node,
+        ...size,
+        position: { x: node.position.x + (node.width - size.width) / 2, y: node.position.y + (node.height - size.height) / 2 },
+        metadata: {
+            ...metadata, primaryImageId: primary?.content ? primary.id : undefined,
+            content: primary?.content, storageKey: primary?.storageKey,
+            naturalWidth: primary?.naturalWidth, naturalHeight: primary?.naturalHeight,
+            bytes: primary?.bytes, mimeType: primary?.mimeType, status: primary?.status || "idle", errorDetails: primary?.errorDetails,
+        },
+    };
 }
 
 export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {

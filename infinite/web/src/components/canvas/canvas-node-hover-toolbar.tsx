@@ -7,7 +7,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { textPromptForOptimization } from "@/lib/canvas/canvas-text-optimization";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { canvasNodeImageBytes, canvasNodeImagePixels, formatPixelSize } from "@/lib/canvas/canvas-node-info";
-import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
+import { formatBytes } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
@@ -237,7 +237,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     const { t } = useTranslation();
     const [view, setView] = useState<"info" | "json">("info");
     const imagePixels = canvasNodeImagePixels(node);
-    const imageBytes = canvasNodeImageBytes(node) || (node?.metadata?.content ? getDataUrlByteSize(node.metadata.content) : 0);
+    const imageBytes = canvasNodeImageBytes(node);
     const batchCount = node?.type === CanvasNodeType.Image ? node.metadata?.images?.length || 0 : 0;
     const json = useMemo(() => {
         if (!node) return "";

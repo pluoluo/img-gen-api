@@ -224,7 +224,7 @@ export function resolveImageApiMarkup(sourceNode: CanvasNodeData | undefined, no
     if (!firstNode || !markup) return { references: references.map(replaceComposite) };
     const skip = new Set([firstNode.id, markup.storageKey, markup.source.storageKey, firstNode.metadata?.storageKey]);
     const extras = references.filter((ref) => !skip.has(ref.id) && !skip.has(ref.storageKey || "")).map(replaceComposite);
-    return { references: [asSource(firstNode, markup), ...extras], markup };
+    return { references: [asSource(firstNode, markup), ...extras], markup: { ...markup, overlay: markup.overlay || { storageKey: firstNode.metadata?.storageKey, url: firstNode.metadata?.content } } };
 }
 
 export function isAudioFile(file: File) {

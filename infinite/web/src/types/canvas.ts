@@ -48,6 +48,7 @@ export type CanvasNodeText = {
 export type CanvasNodeMetadata = {
     maskLayer?: boolean;
     imageApiMask?: import("@/services/api/image-api").ImageApiMask;
+    generationMarkup?: import("@/services/api/image-api").ImageApiMarkup;
     imageApiMarkup?: import("@/services/api/image-api").ImageApiMask;
     imageApiTask?: import("@/services/api/image-api").ImageApiTaskHandle;
     content?: string;

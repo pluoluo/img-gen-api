@@ -203,11 +203,22 @@ with zipfile.ZipFile('data/infinite-validation/archive-complete.zip') as source,
         await page.waitForTimeout(100);
       }
     }
-    assert.equal(submissions.length, 2);
-    assert.equal(posts.length, 2);
+    const generated = (await project(page)).nodes.find(node => node.id === annotated.id);
+    assert.ok(generated.metadata.generationMarkup, 'historical markup remains available for retry');
+    assert.equal(generated.metadata.imageApiMarkup, undefined, 'result is not an active annotation layer');
+    await page.reload(); await selectAnnotated();
+    await annotationPanel().getByRole('textbox').fill('继续修改刚生成的图片');
+    const continued = page.waitForResponse(response => response.url().includes('/api/v1/tasks/annotation-reference-'));
+    await annotationPanel().getByRole('button', { name: '生成', exact: true }).click();
+    await continued;
+    const latestRequest = submissions[submissions.length - 1];
+    assert.equal(latestRequest.image_base64s[0], returnedImage, 'continued editing must start from the generated result');
+    assert.equal(latestRequest.markup_base64, undefined, 'continued editing must not reapply old markup');
+    assert.equal(submissions.length, 3);
+    assert.equal(posts.length, 3);
     assert.ok(posts.every(url => url.endsWith('/api/v1/infinite/generate')));
     assert.deepEqual(errors, []);
-    const result = { toolbarMigration: true, fullscreen: true, penRectangleEraserText: true, undoRedo: true, saveIncludesActiveText: true, originalPreserved: true, originalResolution: true, erasePreservesSource: true, cancelHasNoChanges: true, refreshPersists: true, backgroundShortcutsBlocked: true, mobileFits: true, embeddedFullscreenRestores: true, currentImageShownFirst: true, annotatedPngSubmittedInNewAndOverwriteModes: true, mockedGenerations: 2, postRequests: posts, browserErrors: errors };
+    const result = { toolbarMigration: true, fullscreen: true, penRectangleEraserText: true, undoRedo: true, saveIncludesActiveText: true, originalPreserved: true, originalResolution: true, erasePreservesSource: true, cancelHasNoChanges: true, refreshPersists: true, backgroundShortcutsBlocked: true, mobileFits: true, embeddedFullscreenRestores: true, currentImageShownFirst: true, annotatedPngSubmittedInNewAndOverwriteModes: true, continuousEditUsesLatestResult: true, mockedGenerations: 3, postRequests: posts, browserErrors: errors };
     fs.writeFileSync(output + '/annotation-result.json', JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

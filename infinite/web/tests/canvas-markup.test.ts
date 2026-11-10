@@ -75,3 +75,19 @@ test("overlay fallback shifts additional image labels without touching image ten
     const indices = Array.from({ length: 10 }, (_, index) => index === 0 ? 0 : index + 1);
     expect(remapImageReferenceLabels(`${imageReferenceLabel(0)} / ${imageReferenceLabel(9)}`, indices)).toBe(`${imageReferenceLabel(0)} / ${imageReferenceLabel(10)}`);
 });
+
+test("editing a generated result uses its pixels and keeps historical markup only for retry", () => {
+    const historicalMarkup = { storageKey: "image:overlay", source: { storageKey: "image:original" } };
+    const generated = image("result", { generationType: "edit", generationMarkup: historicalMarkup });
+    const result = resolveImageApiMarkup(generated, [generated], [ref("result")]);
+    expect(result.markup).toBeUndefined();
+    expect(result.references[0].storageKey).toBe("image:result");
+    expect(generated.metadata?.generationMarkup).toBe(historicalMarkup);
+});
+
+test("annotation input retains a composite preview for external channel fallback", () => {
+    const annotated = image("annotated", { imageApiMarkup: { storageKey: "image:overlay", source: { storageKey: "image:original" } } });
+    const result = resolveImageApiMarkup(annotated, [annotated], [ref("annotated")]);
+    expect(result.markup?.overlay?.storageKey).toBe("image:annotated");
+    expect(result.references[0].storageKey).toBe("image:original");
+});

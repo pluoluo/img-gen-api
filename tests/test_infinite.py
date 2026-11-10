@@ -134,7 +134,7 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
         generated = Image.new("RGBA", (16, 16), (200, 10, 20, 255))
         with patch.object(api, "generate_openai_image", new_callable=AsyncMock) as provider, patch.object(api, "save_image", new_callable=AsyncMock), patch.object(api, "save_generation_inputs", new_callable=AsyncMock):
             provider.return_value = [{"base64": encode(generated)}]
-            result = await self.client.post("/api/v1/infinite/generate", json={"sub_model": "gpt-image-2.5-flare", "prompt": "edit", "size": "16x16", "image_base64s": [encode(source)], "mask_base64": encode(mask), "preserve_outside_mask": True})
+            result = await self.client.post("/api/v1/infinite/generate", json={"sub_model": "gpt-image-2.5-flare", "prompt": "edit", "size": "auto", "image_base64s": [encode(source)], "mask_base64": encode(mask), "preserve_outside_mask": True})
             self.assertEqual(result.status_code, 200)
             task_id = result.json()["task_id"]
             for _ in range(30):
