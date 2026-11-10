@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { textPromptForOptimization } from "@/lib/canvas/canvas-text-optimization";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { canvasNodeImageBytes, canvasNodeImagePixels, formatPixelSize } from "@/lib/canvas/canvas-node-info";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -235,7 +236,8 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const [view, setView] = useState<"info" | "json">("info");
-    const imageBytes = node?.type === CanvasNodeType.Image && node.metadata?.content ? getDataUrlByteSize(node.metadata.content) : 0;
+    const imagePixels = canvasNodeImagePixels(node);
+    const imageBytes = canvasNodeImageBytes(node) || (node?.metadata?.content ? getDataUrlByteSize(node.metadata.content) : 0);
     const batchCount = node?.type === CanvasNodeType.Image ? node.metadata?.images?.length || 0 : 0;
     const json = useMemo(() => {
         if (!node) return "";
@@ -279,6 +281,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label="ID" value={node.id} />
                             <InfoRow label={t("canvas.nodeToolbar.name")} value={node.title || t("canvas.node.untitled")} />
                             <InfoRow label={t("canvas.nodeToolbar.type")} value={node.type === CanvasNodeType.Group ? t("canvas.node.group") : node.type === CanvasNodeType.Config ? t("canvas.configNode.title") : [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio, CanvasNodeType.Text].includes(node.type as CanvasNodeType) ? t(`assets.kinds.${node.type}`) : getNodeDefinition(node.type)?.title || node.type} />
+                            {imagePixels ? <InfoRow label={t("canvas.nodeToolbar.imageDimensions")} value={formatPixelSize(imagePixels)} /> : null}
                             <InfoRow label={t("canvas.nodeToolbar.size")} value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
                             <InfoRow label={t("canvas.nodeToolbar.position")} value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label={t("canvas.nodeToolbar.status")} value={node.metadata?.status || "idle"} />
