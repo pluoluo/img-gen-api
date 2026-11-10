@@ -48,7 +48,7 @@ def _png_rgba(image: Image.Image, size: tuple[int, int], resample) -> bytes:
         if resized.mode != "RGBA":
             resized = resized.convert("RGBA")
         output = io.BytesIO()
-        resized.save(output, format="PNG")
+        resized.save(output, format="PNG", optimize=True)
         data = output.getvalue()
     finally:
         resized.close()

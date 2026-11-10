@@ -176,7 +176,7 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mask_image.mode, 'RGBA')
             self.assertEqual(mask_image.getchannel('A').getextrema(), (0, 255))
             extra = Image.open(io.BytesIO(files[2][1][1]))
-            self.assertEqual(extra.size, (1024, 1024))
+            self.assertEqual(extra.size, (512, 512))
 
     async def test_4k_primary_and_mask_match_even_if_upstream_follows_primary_size(self):
         with patch('image_api.services.openai_img._httpx_post', new=AsyncMock(return_value={'data': [{'b64_json': png()}]})) as post:
@@ -203,7 +203,7 @@ class MaskApiTests(unittest.IsolatedAsyncioTestCase):
             first = Image.open(io.BytesIO(files[0][1][1]))
             second = Image.open(io.BytesIO(files[1][1][1]))
             self.assertEqual(first.size, (1664, 944))
-            self.assertEqual(second.size, (1664, 928))
+            self.assertEqual(second.size, (1650, 928))
 
     async def test_markup_is_transparent_png_matching_resized_primary(self):
         overlay = Image.new('RGBA', (3840, 2160), (0, 0, 0, 0))

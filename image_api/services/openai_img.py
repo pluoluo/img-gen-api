@@ -211,7 +211,11 @@ async def _httpx_post(url: str, headers: dict, files: list = None,
                             f.write(chunk)
                             total_bytes += len(chunk)
                     log_info(f"httpx multipart 响应体: {total_bytes} 字节")
-            with open(tmp_path, "r", encoding="utf-8") as f:
+            with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
+                if resp.status_code != 200:
+                    raw = f.read()
+                    log_error(f"API 非200响应: HTTP {resp.status_code} | {raw[:500]}")
+                    raise APIResponseError(resp.status_code, raw)
                 result = _json.load(f)
             result_str = _json.dumps(result, ensure_ascii=False)
             log_info(f"PackyAPI multipart 完整响应: {result_str[:2000]}")
@@ -300,6 +304,8 @@ def _looks_user_chinese(text: str) -> bool:
 
 
 def _http_status_public(status: int) -> str:
+    if status == 413:
+        return "上传的参考图或图层总量过大，图像服务拒绝接收（HTTP 413）。请缩小参考图后再试。"
     if status == 429:
         return "请求太频繁，请稍后再试。"
     if status in (401, 403):
@@ -315,6 +321,8 @@ def _api_response_public(exc: "APIResponseError") -> str:
     status = getattr(exc, "status", 0) or 0
     msg = (getattr(exc, "api_message", None) or "").strip()
     low = msg.lower()
+    if status == 413:
+        return _http_status_public(status)
     if status == 429 or "rate limit" in low or "too many" in low:
         return "请求太频繁，请稍后再试。"
     if "no access to model" in low:
@@ -604,7 +612,7 @@ def validate_and_adjust_size(target_size: str, orig_w: int, orig_h: int) -> tupl
     return actual_w, actual_h, actual_size
 
 
-def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[bytes, str, str]:
+def preprocess_reference_image(image_base64: str, target_size: str, *, allow_upscale: bool = True) -> tuple[bytes, str, str]:
     """
     Resize reference image to the user's selected target_size.
 
@@ -623,6 +631,8 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
       - "auto": keep original dimensions, apply 16x alignment + pixel constraints
       - Specific size: use the requested width and height,
         then apply 16x alignment + pixel constraints
+      - Additional references use allow_upscale=False: retain their aspect
+        ratio and fit within the computed dimensions without enlarging them.
     """
     try:
         # ── Step 1: decode reference image ──────────────────────────────────────
@@ -648,10 +658,16 @@ def preprocess_reference_image(image_base64: str, target_size: str) -> tuple[byt
             log_info(f"Processed size: {actual_w}x{actual_h}")
 
             resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
-            img_resized = img.resize((actual_w, actual_h), resample=resample)
+            if allow_upscale:
+                img_resized = img.resize((actual_w, actual_h), resample=resample)
+            else:
+                img_resized = img.copy()
+                img_resized.thumbnail((actual_w, actual_h), resample=resample)
+                actual_w, actual_h = img_resized.size
+                adjusted_size = f"{actual_w}x{actual_h}"
             try:
                 output = io.BytesIO()
-                img_resized.save(output, format="PNG")
+                img_resized.save(output, format="PNG", optimize=True)
                 actual_size_str = f"{actual_w}x{actual_h}"
                 log_info(f"Final: {actual_w}x{actual_h} (ratio {actual_w/actual_h:.3f}, {actual_w*actual_h} pixels)")
                 # Return: (resized_bytes, actual_size_for_api, adjusted_size_str)
@@ -847,8 +863,8 @@ async def generate_openai_image(
 
             field_name = "image[]"
 
-            # First image determines output size. Extra refs keep their own
-            # aspect ratio at the target width, avoiding raw 4K uploads (413).
+            # Only the primary/mask geometry determines output size. Extra
+            # references retain their aspect ratio and must not be enlarged.
             files = [(field_name, ("reference.png", processed_bytes, "image/png"))]
             if len(processed_bytes) > 50 * 1024 * 1024:
                 raise ValueError("主参考图超过 50 MB")
@@ -862,7 +878,9 @@ async def generate_openai_image(
                 files.append(("markup", ("markup.png", markup_bytes, "image/png")))
                 log_info(f"标注图层预处理完成：{len(markup_bytes)} 字节，API尺寸={actual_size}")
             for i, b64 in enumerate(all_base64s[1:], start=1):
-                extra_bytes, extra_size, _ = preprocess_reference_image(b64, (size or "auto").split("x")[0])
+                extra_bytes, extra_size, _ = preprocess_reference_image(
+                    b64, (size or "auto").split("x")[0], allow_upscale=False,
+                )
                 files.append((field_name, (f"reference_{i}.png", extra_bytes, "image/png")))
                 log_info(f"参考图[{i}] 预处理完成：{len(extra_bytes)} 字节，API尺寸={extra_size}")
 
@@ -892,6 +910,8 @@ async def generate_openai_image(
                 "image_count": sum(1 for f in files if f[0] == field_name),
                 "has_mask": bool(mask_base64),
                 "has_markup": bool(markup_base64),
+                "file_bytes": sum(len(file[1][1]) for file in files),
+                "files": [{"field": field, "name": item[0], "bytes": len(item[1])} for field, item in files],
             })
 
             timeout = _generation_timeout(actual_size)
