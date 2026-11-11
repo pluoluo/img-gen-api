@@ -431,6 +431,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                                 setError("");
                             }}
                         />
+                        <p id="mask-generate-hint" className="text-xs leading-5" style={{ color: token.colorTextSecondary }}>{t("canvas.editors.maskGenerateHint")}</p>
                         {error ? <div className="text-xs font-medium text-[#ef4444]">{error}</div> : null}
                     </div>
 
@@ -442,7 +443,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                             <Button icon={<ImagePlus className="size-4" />} disabled={smart.busy || Boolean(smart.selection)} onClick={() => submit(false)}>
                                 {t("canvas.editors.maskExport")}
                             </Button>
-                            <Button type="primary" icon={<WandSparkles className="size-4" />} disabled={smart.busy || Boolean(smart.selection)} onClick={() => submit(true)}>
+                            <Button type="primary" icon={<WandSparkles className="size-4" />} aria-describedby="mask-generate-hint" disabled={smart.busy || Boolean(smart.selection)} onClick={() => submit(true)}>
                                 {t("canvas.editors.maskGenerate")}
                             </Button>
                         </div>

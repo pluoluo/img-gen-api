@@ -75,6 +75,11 @@ async function stored(page, update = false) {
       await page.locator('[data-node-id]').first().hover();
       await page.getByRole('button', { name: '添加蒙版遮罩后局部修改', exact: true }).click();
       const dialog = page.getByRole('dialog');
+      const hint = dialog.locator('#mask-generate-hint');
+      await hint.waitFor({ state: 'visible' });
+      assert((await hint.innerText()).includes('画布默认参数'));
+      assert((await hint.innerText()).includes('独立设置'));
+      assert.equal(await dialog.getByRole('button', { name: '立刻生成', exact: true }).getAttribute('aria-describedby'), 'mask-generate-hint');
       const canvas = dialog.locator('canvas:visible');
       await canvas.waitFor();
       const box = await canvas.boundingBox();
@@ -104,6 +109,26 @@ async function stored(page, update = false) {
         await page.getByRole('button', { name: '开始生成', exact: true }).click();
       }
       await completed;
+      if (!deferred) {
+        let saved;
+        for (let i = 0; i < 60; i++) {
+          saved = await stored(page);
+          if (saved.nodes.length === 3 && saved.nodes.every(node => node.metadata.status !== 'loading')) break;
+          await page.waitForTimeout(100);
+        }
+        const mask = saved.nodes.find(node => node.metadata.maskLayer);
+        const result = saved.nodes.find(node => node.metadata.generationType === 'edit');
+        assert(mask && result);
+        assert.equal(saved.connections.length, 1, 'immediate generation must not add a redundant original reference edge');
+        assert.equal(saved.connections[0].fromNodeId, mask.id);
+        assert.equal(saved.connections[0].toNodeId, result.id);
+        assert.equal(result.metadata.references.length, 1, 'retry keeps one original bundled with the mask');
+        assert.equal(result.metadata.references[0], mask.metadata.imageApiMask.source.storageKey);
+        assert.deepEqual(result.metadata.imageApiMask, mask.metadata.imageApiMask);
+        await page.reload();
+        const restored = await stored(page);
+        assert.deepEqual(restored.connections, saved.connections);
+      }
       if (external) {
         const sizes = await page.evaluate(async images => Promise.all(images.map(async data => {
           const bitmap = await createImageBitmap(await (await fetch('data:image/png;base64,' + data)).blob());

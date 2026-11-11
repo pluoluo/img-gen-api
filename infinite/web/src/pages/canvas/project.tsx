@@ -2252,7 +2252,7 @@ function InfiniteCanvasPage() {
                     metadata: childMetadata,
                 },
             ]);
-            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }, { id: nanoid(), fromNodeId: maskNodeId, toNodeId: childId }]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: maskNodeId, toNodeId: childId }]);
             setSelectedNodeIds(new Set([childId]));
             setSelectedConnectionId(null);
             setDialogNodeId(childId);
