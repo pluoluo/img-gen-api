@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import { applyOptimizedText, buildTextOptimizationConfig, textPromptForOptimization } from "@/lib/canvas/canvas-text-optimization";
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
-import { waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
+import { acknowledgeImageApiResult, waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -488,6 +488,13 @@ function InfiniteCanvasPage() {
         [projectId, updateProject],
     );
 
+    const saveImageResult = useCallback(async (image: { dataUrl: string; imageApiTask?: ImageApiTaskHandle }, storageKey: string | undefined, apply: () => void) => {
+        flushSync(apply);
+        updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
+        await flushCanvasStorage();
+        await acknowledgeImageApiResult(image, storageKey);
+    }, [projectId, updateProject]);
+
     const imagePollIdsRef = useRef(new Set<string>());
     const resumeImageNode = useCallback(
         async (node: CanvasNodeData, onlyImageId?: string) => {
@@ -534,6 +541,7 @@ function InfiniteCanvasPage() {
                             );
                             updateProject(projectId, { nodes: nodesRef.current });
                             await flushCanvasStorage();
+                            await acknowledgeImageApiResult(image, uploaded.storageKey);
                         } catch (error) {
                             if (isGenerationCanceled(error)) return;
                             const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
@@ -2262,7 +2270,7 @@ function InfiniteCanvasPage() {
                 const image = await requestEdit(generationConfig, prompt, references, { ...imageRequestOptions(childId, controller.signal), imageApiMask: generationMetadata.imageApiMask }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+                await saveImageResult(image, uploaded.storageKey, () => setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item))));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.maskFailed");
@@ -2273,7 +2281,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, saveImageResult, startGenerationRequest, t],
     );
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
@@ -2343,7 +2351,7 @@ function InfiniteCanvasPage() {
                 ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+                await saveImageResult(image, uploaded.storageKey, () => setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item))));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
@@ -2353,7 +2361,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, imageRequestOptions, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, imageRequestOptions, openConfigDialog, saveImageResult, startGenerationRequest, t],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2599,9 +2607,9 @@ function InfiniteCanvasPage() {
                         ? await requestEdit({ ...generationConfig, count: "1" }, context.prompt, refs, imageRequestOptions(nodeId, controller.signal)).then((items) => items[0])
                         : await requestGeneration({ ...generationConfig, count: "1" }, context.prompt, imageRequestOptions(nodeId, controller.signal)).then((items) => items[0]);
                     const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
-                    setNodes((prev) =>
+                    await saveImageResult(image, uploaded.storageKey, () => setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
-                    );
+                    ));
                     setDialogNodeId(null);
                 } catch (error) {
                     if (!isGenerationCanceled(error)) {
@@ -2727,11 +2735,11 @@ function InfiniteCanvasPage() {
                                 const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
-                                setNodes((prev) =>
+                                await saveImageResult(image, uploaded.storageKey, () => setNodes((prev) =>
                                     prev.map((node) => {
                                         if (node.id !== rootId) return node;
                                         const images = node.metadata?.images?.map((image) => (image.id === imageId ? item : image)) || [];
-                                        if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
+                                        if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images, status: NODE_STATUS_SUCCESS } };
                                         const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
                                         return {
                                             ...node,
@@ -2747,10 +2755,11 @@ function InfiniteCanvasPage() {
                                                 mimeType: item.mimeType,
                                                 images,
                                                 primaryImageId: imageId,
+                                                status: NODE_STATUS_SUCCESS,
                                             },
                                         };
                                     }),
-                                );
+                                ));
                                 hasSuccess = true;
                                 if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                                 return true;
@@ -3007,7 +3016,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, saveImageResult, startGenerationRequest, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -3120,7 +3129,7 @@ function InfiniteCanvasPage() {
                           references: savedImageMetadata.references,
                       }
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
-                setNodes((prev) =>
+                await saveImageResult(image, uploadedImage.storageKey, () => setNodes((prev) =>
                     prev.map((item) => {
                         if (item.id !== node.id) return item;
                         const makePrimary = !imageId || !item.metadata?.content;
@@ -3140,7 +3149,7 @@ function InfiniteCanvasPage() {
                             },
                         };
                     }),
-                );
+                ));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
@@ -3166,7 +3175,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, resumeImageNode, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageRequestOptions, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, resumeImageNode, saveImageResult, startGenerationRequest, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {

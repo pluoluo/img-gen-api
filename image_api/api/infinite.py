@@ -59,8 +59,12 @@ def configuration():
     }
 
 
+class InfiniteGenerateRequest(GenerateRequest):
+    save_to_gallery: bool = False
+
+
 @router.post("/generate")
-async def generate_image(body: GenerateRequest):
+async def generate_image(body: InfiniteGenerateRequest):
     model = next((item for item in model_catalog() if item["value"] == body.sub_model), None)
     if model is None:
         raise HTTPException(422, "模型不在当前服务的模型目录中，请刷新配置")

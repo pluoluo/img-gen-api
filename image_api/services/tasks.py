@@ -4,6 +4,7 @@ import uuid
 import json
 import os
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from enum import Enum
@@ -37,6 +38,8 @@ class Task:
     images: List[dict] = field(default_factory=list)  # final results
     error: Optional[str] = None
     raw_response: Optional[str] = None  # raw API response on failure
+    save_to_gallery: bool = True
+    result_released_at: Optional[str] = None
     handle: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
 
 
@@ -44,9 +47,17 @@ _tasks: dict[str, Task] = {}
 _session = str(uuid.uuid4())
 
 
+def _task_folder():
+    return Path(os.environ.get("TASK_DATA_DIR", Path(__file__).resolve().parents[2] / "data" / "tasks"))
+
+
+def _result_path(task_id):
+    return _task_folder() / "results" / f"{uuid.UUID(task_id)}.json"
+
+
 @contextmanager
 def database():
-    folder = Path(os.environ.get("TASK_DATA_DIR", Path(__file__).resolve().parents[2] / "data" / "tasks"))
+    folder = _task_folder()
     folder.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(folder / "tasks.sqlite3") as connection:
         connection.executescript("""
@@ -69,6 +80,24 @@ def _save(connection, task):
     finally:
         task.handle = handle
     snapshot.pop("handle", None)
+    if not task.save_to_gallery:
+        # Large delivery payloads live outside SQLite so acknowledgement releases
+        # disk space immediately instead of leaving a large database high-water mark.
+        snapshot["images"] = []
+        if task.images and not task.result_released_at:
+            path = _result_path(task.id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    json.dump(task.images, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
     connection.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?, ?)", (task.id, _session, json.dumps(snapshot, ensure_ascii=False)))
 
 
@@ -121,6 +150,10 @@ def get_task(task_id: str) -> Optional[Task]:
         values["status"] = TaskStatus(values["status"])
         values.pop("handle", None)
         task = Task(**values)
+        if not task.save_to_gallery and task.status == TaskStatus.COMPLETED and not task.result_released_at:
+            path = _result_path(task.id)
+            if path.is_file():
+                task.images = json.loads(path.read_text(encoding="utf-8"))
         if row[0] != _session and task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
             task.status = TaskStatus.FAILED
             task.error = "服务重启中断了任务，未自动重新提交。请先检查供应商和图库结果，再决定是否重新生成。"
@@ -128,6 +161,36 @@ def get_task(task_id: str) -> Optional[Task]:
             _save(connection, task)
     _tasks[task_id] = task
     return task
+
+
+def acknowledge_result(task_id: str, client_request_id: str):
+    """Release only an Infinite result durably saved by its original requester."""
+    with database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        submission = connection.execute("SELECT task_id FROM submissions WHERE id = ?", (client_request_id,)).fetchone()
+        if not submission or submission[0] != task_id:
+            raise ValueError("领取凭据与任务不匹配")
+        row = connection.execute("SELECT snapshot FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise LookupError("任务不存在")
+        values = json.loads(row[0])
+        if values.get("save_to_gallery", True):
+            raise ValueError("图库归档任务不支持释放结果")
+        if values["status"] != TaskStatus.COMPLETED:
+            raise ValueError("任务尚未生成完成")
+        values["result_released_at"] = values.get("result_released_at") or datetime.now().isoformat()
+        values["images"] = []
+        values["raw_response"] = None
+        connection.execute("UPDATE tasks SET snapshot = ? WHERE id = ?", (json.dumps(values, ensure_ascii=False), task_id))
+    cached = _tasks.get(task_id)
+    if cached:
+        cached.images = []
+        cached.raw_response = None
+        cached.result_released_at = values["result_released_at"]
+    # Commit the tombstone first: a restart must never make an acknowledged
+    # result available again. Repeated acknowledgements also retry file deletion.
+    _result_path(task_id).unlink(missing_ok=True)
+    return values["result_released_at"]
 
 
 def update_task(task_id: str, **kwargs):

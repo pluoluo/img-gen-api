@@ -1,4 +1,4 @@
-import { IMAGE_API_PATH, imageApiRequest } from "@/services/api/image-api";
+import { IMAGE_API_PATH, imageApiRequest, flushImageApiAcknowledgements } from "@/services/api/image-api";
 import { modelOptionsFromChannels, useConfigStore, type ChannelModel, type ModelChannel } from "@/stores/use-config-store";
 
 export async function initializeImageApi() {
@@ -6,6 +6,7 @@ export async function initializeImageApi() {
     if (!import.meta.env.VITE_IMAGE_API) return;
     const metadata = await imageApiRequest<{ app: string; models: ChannelModel[]; provider_models: ChannelModel[]; text_api_format?: "chat-completions" | "responses" }>(`${IMAGE_API_PATH}/config`);
     if (metadata.app !== "image-api") throw new Error("画布服务配置不正确");
+    void flushImageApiAcknowledgements();
     const { config, webdav } = useConfigStore.getState();
     const channel: ModelChannel = {
         id: "image-api",

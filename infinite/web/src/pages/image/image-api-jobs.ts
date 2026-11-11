@@ -1,7 +1,7 @@
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { requestEdit, requestGeneration } from "@/services/api/image";
-import { waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
+import { acknowledgeImageApiResult, waitForImageApiTask, type ImageApiTaskHandle } from "@/services/api/image-api";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -75,6 +75,7 @@ export function runWorkbenchJob(job: WorkbenchJob, snapshot?: WorkbenchSnapshot)
             job.image = { ...image, dataUrl: image.storageKey ? "" : image.dataUrl };
             job.error = undefined;
             if (job.task) await workbenchJobs.setItem(job.id, job);
+            await acknowledgeImageApiResult(result[0], stored.storageKey);
             return image;
         } catch (error) {
             job.error = error instanceof Error ? error.message : String(error);

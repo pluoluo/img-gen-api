@@ -16,7 +16,7 @@ from image_api.services.gemini_img import generate_gemini_image
 from image_api.services.minimax_img import generate_minimax_image
 from image_api.services.gallery import save_image, get_images, get_image, delete_image, delete_batch, count_images, save_generation_inputs, reference_path
 from image_api.services.tasks import (
-    reserve_task, get_task, update_task, attach_handle, cancel_task, get_submission, TaskStatus
+    reserve_task, get_task, update_task, attach_handle, cancel_task, get_submission, acknowledge_result, TaskStatus
 )
 from image_api.services.log_helper import log_info, log_warn, log_error, read_logs, clear_logs
 from image_api.config import settings
@@ -47,6 +47,7 @@ class GenerateRequest(BaseModel):
     frame_count: Optional[int] = None
     frame_duration_ms: Optional[int] = None
     client_request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    save_to_gallery: bool = True
 
     @model_validator(mode="after")
     def validate_edit(self):
@@ -103,6 +104,8 @@ class TaskStatusResponse(BaseModel):
     progress: int
     images: List[ImageResult]
     error: Optional[str] = None
+    client_storage: bool = False
+    result_released_at: Optional[str] = None
     raw_response: Optional[str] = None
 
 
@@ -159,6 +162,7 @@ async def generate(request: GenerateRequest):
             size=request.size,
             quality=request.quality,
             n=request.n,
+            save_to_gallery=request.save_to_gallery,
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -241,7 +245,8 @@ async def _run_generation(task_id: str, request: GenerateRequest):
 
         update_task(task_id, status=TaskStatus.RUNNING, started_at=datetime.now().isoformat())
 
-        await save_generation_inputs(task_id, request)
+        if request.save_to_gallery:
+            await save_generation_inputs(task_id, request)
 
         # Simulate early progress
         update_task(task_id, progress=10)
@@ -375,7 +380,7 @@ async def _run_generation(task_id: str, request: GenerateRequest):
         update_task(task_id, progress=90)
 
         # Save to gallery
-        if result:
+        if result and request.save_to_gallery:
             await save_image(
                 model=request.model,
                 sub_model=request.sub_model,
@@ -472,7 +477,24 @@ async def get_task_status(task_id: str):
         images=[ImageResult(**img) for img in task.images],
         error=task.error,
         raw_response=task.raw_response,
+        client_storage=not task.save_to_gallery,
+        result_released_at=task.result_released_at,
     )
+
+
+class ResultAcknowledgement(BaseModel):
+    client_request_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/tasks/{task_id}/acknowledge")
+def acknowledge_task_result(task_id: str, body: ResultAcknowledgement):
+    try:
+        released_at = acknowledge_result(task_id, body.client_request_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"task_id": task_id, "result_released_at": released_at}
 
 
 # ─── Gallery endpoints ────────────────────────────────────────────────

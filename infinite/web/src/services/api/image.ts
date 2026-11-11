@@ -97,7 +97,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal } & ImageApiLifecycle;
+type RequestOptions = { signal?: AbortSignal; saveToGallery?: boolean } & ImageApiLifecycle;
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -871,6 +871,7 @@ async function requestLocalImages(config: AiConfig, requestConfig: AiConfig, pro
         if (format === "svg" && (images.length || mask || markup)) throw new Error("矢量 SVG 只支持文生图，不能带参考图、蒙版或标注");
         const n = format === "svg" ? 1 : Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
         return await requestImageApi({
+            ...(options?.saveToGallery ? { save_to_gallery: true } : {}),
             sub_model: requestConfig.model,
             prompt: withSystemPrompt(requestConfig, prompt),
             size: resolveRequestSize(config.size, config.model || config.imageModel),

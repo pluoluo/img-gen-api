@@ -81,12 +81,20 @@ class InfiniteTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(request.image_base64s, ["first", "second"])
                 self.assertEqual(request.client_request_id, "same-submission")
                 self.assertEqual(request.n, 2)
+                self.assertFalse(request.save_to_gallery)
 
     async def test_unknown_model_is_rejected_before_any_paid_submission(self):
         with patch("image_api.api.infinite.generate", new_callable=AsyncMock) as generate:
             response = await self.client.post("/api/v1/infinite/generate", json={"sub_model": "missing", "prompt": "test"})
             self.assertEqual(response.status_code, 422)
             generate.assert_not_awaited()
+
+    async def test_explicit_archive_is_available_for_callers_without_durable_receipts(self):
+        with patch("image_api.api.infinite.generate", new_callable=AsyncMock) as generate:
+            generate.return_value = {"task_id": "archived", "images": []}
+            response = await self.client.post("/api/v1/infinite/generate", json={"sub_model": "gpt-image-2.5-flare", "prompt": "plugin", "save_to_gallery": True})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(generate.call_args.args[0].save_to_gallery)
 
     async def test_offline_browser_validation_cannot_start_paid_requests(self):
         from image_api.config import settings

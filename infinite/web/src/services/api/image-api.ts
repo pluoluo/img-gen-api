@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import localforage from "localforage";
 
 export const IMAGE_API_PATH = "/api/v1/infinite";
 
@@ -62,17 +63,63 @@ type ImageApiInput = {
     mask_base64?: string;
     markup_base64?: string;
     preserve_outside_mask?: boolean;
+    save_to_gallery?: boolean;
 };
 type ImageTask = {
     status: "pending" | "running" | "completed" | "failed" | "cancelled";
     images: { base64?: string; url?: string; mime_type?: string }[];
     error?: string;
+    client_storage?: boolean;
+    result_released_at?: string;
 };
 
 export type ImageApiTaskHandle = { clientRequestId: string; taskId?: string; failed?: boolean };
 export type ImageApiMask = { storageKey: string; source: { storageKey?: string; url?: string }; overlay?: { storageKey?: string; url?: string } };
 export type ImageApiMarkup = ImageApiMask;
 export type ImageApiLifecycle = { imageApiTask?: ImageApiTaskHandle; onImageApiTask?: (handle: ImageApiTaskHandle) => Promise<void>; imageApiMask?: ImageApiMask; imageApiMarkup?: ImageApiMarkup };
+
+export const imageApiAcknowledgements = localforage.createInstance({ name: "infinite-canvas", storeName: "image_api_acknowledgements" });
+let acknowledgementRun: Promise<void> | undefined;
+let acknowledgementPending = false;
+
+// Called only after both the image Blob and its owning canvas/job are durable.
+// Keep failed acknowledgements locally and retry on the next result or app load.
+export async function acknowledgeImageApiResult(image: { dataUrl: string; imageApiTask?: ImageApiTaskHandle }, storageKey: string | undefined) {
+    const handle = image.imageApiTask;
+    if (!handle?.taskId || !storageKey) return;
+    try {
+        await imageApiAcknowledgements.setItem(handle.taskId, handle);
+        void flushImageApiAcknowledgements();
+    } catch (error) {
+        console.warn("结果已保存到本地，服务器领取确认稍后重试", error);
+    }
+}
+
+export function flushImageApiAcknowledgements(): Promise<void> {
+    acknowledgementPending = true;
+    if (acknowledgementRun) return acknowledgementRun;
+    const run = async () => {
+        do {
+            acknowledgementPending = false;
+            const handles: ImageApiTaskHandle[] = [];
+            await imageApiAcknowledgements.iterate<ImageApiTaskHandle, void>((handle) => { handles.push(handle); });
+            for (const handle of handles) {
+                try {
+                    await imageApiRequest(`/api/v1/tasks/${encodeURIComponent(handle.taskId!)}/acknowledge`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ client_request_id: handle.clientRequestId }),
+                    });
+                    await imageApiAcknowledgements.removeItem(handle.taskId!);
+                } catch (error) {
+                    console.warn("结果已保存到本地，服务器领取确认稍后重试", error);
+                }
+            }
+        } while (acknowledgementPending);
+    };
+    acknowledgementRun = run().catch((error) => { console.warn("读取领取确认队列失败", error); }).finally(() => { acknowledgementRun = undefined; });
+    return acknowledgementRun;
+}
 
 function cancelUpstream(taskId?: string) {
     if (!taskId) return;
@@ -123,12 +170,13 @@ export async function waitForImageApiTask(handle: ImageApiTaskHandle, signal: Ab
                 throw new Error(publicImageApiError(task.error) || "生成失败");
             }
             if (task.status === "completed") {
+                if (task.result_released_at) throw new Error("结果已由客户端保存并从服务器释放，请在原浏览器的画布或工作台查看本地图片");
                 if (!task.images.length) throw new Error("生成任务没有返回图片");
                 return task.images.map((image) => {
                     const mime = image.mime_type || "image/png";
                     const dataUrl = image.base64 ? `data:${mime};base64,${image.base64}` : image.url;
                     if (!dataUrl) throw new Error("生成结果缺少图片数据");
-                    return { id: nanoid(), dataUrl };
+                    return { id: nanoid(), dataUrl, ...(task.client_storage ? { imageApiTask: handle } : {}) };
                 });
             }
             await new Promise<void>((resolve, reject) => {
